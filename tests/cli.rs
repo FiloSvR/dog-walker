@@ -224,7 +224,7 @@ fn at24_no_networking_crates_in_lockfile() {
     let deny: toml::Table =
         toml::from_str(&fs::read_to_string(format!("{root}/deny.toml")).unwrap()).unwrap();
     let banned = deny["bans"]["deny"].as_array().unwrap();
-    assert!(banned.len() >= 9, "deny.toml lost part of its ban list");
+    assert!(banned.len() >= 15, "deny.toml lost part of its ban list");
     for entry in banned {
         let name = entry["name"].as_str().unwrap();
         assert!(
@@ -294,6 +294,14 @@ fn at2_unprintable_or_reserved_values_are_rejected() {
             "effort",
         ),
         ("line-separator-in-model", "model = \"a\\u2028b\"", "model"),
+        ("bidi-override-in-model", "model = \"a\\u202Eb\"", "model"),
+        ("bidi-isolate-in-model", "model = \"a\\u2066b\"", "model"),
+        ("bidi-mark-in-model", "model = \"a\\u200Fb\"", "model"),
+        (
+            "bidi-isolate-in-effort",
+            "model = \"m\"\neffort = \"x\\u2069y\"",
+            "effort",
+        ),
         (
             "paragraph-separator-in-effort",
             "model = \"m\"\neffort = \"x\\u2029y\"",

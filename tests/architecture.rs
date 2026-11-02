@@ -5,7 +5,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Spellings of a write that only the `output` module may use.
+/// Spellings of a write that only the `output` module may use. `::write(` also matches
+/// `fs::write`: when the handover code needs that, give it its own, narrower entry.
 const WRITES: [&str; 12] = [
     "print!(",
     "println!(",
@@ -22,7 +23,14 @@ const WRITES: [&str; 12] = [
 ];
 
 /// Naming the process's own streams: only `main.rs` hands them to `cli::run`.
-const STREAMS: [&str; 4] = ["stdout()", "stderr()", "io::stdout", "io::stderr"];
+const STREAMS: [&str; 6] = [
+    "stdout()",
+    "stderr()",
+    "io::stdout",
+    "io::stderr",
+    "stdout as ",
+    "stderr as ",
+];
 
 /// Whether `text` uses `pattern`. A pattern that starts with a letter must not continue a
 /// longer name, so `use_stderr()` is not `stderr()`.
@@ -34,9 +42,13 @@ fn mentions(text: &str, pattern: &str) -> bool {
     })
 }
 
-/// The spellings in `text` that `file` may not use.
-fn violations(file: &Path, text: &str) -> Vec<&'static str> {
-    let may_name_streams = file.ends_with("main.rs");
+/// `src/<name>` itself, not a file of that name in a subdirectory.
+fn is_top_level(src: &Path, file: &Path, name: &str) -> bool {
+    file == src.join(name)
+}
+
+/// The spellings in `text` that a file may not use; `may_name_streams` is true for `main.rs`.
+fn violations(text: &str, may_name_streams: bool) -> Vec<&'static str> {
     WRITES
         .iter()
         .chain(STREAMS.iter().filter(|_| !may_name_streams))
@@ -66,11 +78,14 @@ fn only_the_output_module_writes() -> io::Result<()> {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut checked = 0;
     for path in rust_files(&src)? {
-        if path.ends_with("output.rs") {
+        if is_top_level(&src, &path, "output.rs") {
             continue;
         }
         checked += 1;
-        let found = violations(&path, &fs::read_to_string(&path)?);
+        let found = violations(
+            &fs::read_to_string(&path)?,
+            is_top_level(&src, &path, "main.rs"),
+        );
         assert!(
             found.is_empty(),
             "{} writes output with {found:?}",
@@ -87,22 +102,42 @@ fn only_the_output_module_writes() -> io::Result<()> {
 // The tripwire itself: each spelling is seen, and only `main.rs` may name the streams.
 #[test]
 fn the_tripwire_sees_each_spelling() {
-    let other = Path::new("src/other.rs");
     for pattern in WRITES.iter().chain(STREAMS.iter()) {
         let sample = format!("fn f() {{ {pattern} }}");
-        assert!(violations(other, &sample).contains(pattern), "{pattern}");
+        assert!(violations(&sample, false).contains(pattern), "{pattern}");
     }
-    let main = Path::new("src/main.rs");
     assert_eq!(
-        violations(main, "std::io::stdout().lock()"),
+        violations("std::io::stdout().lock()", true),
         Vec::<&str>::new()
     );
-    assert!(violations(main, "w.write_all(b)").contains(&".write_all("));
+    assert!(violations("w.write_all(b)", true).contains(&".write_all("));
     // Names that merely contain a stream's name are not the stream.
     assert_eq!(
-        violations(other, "if error.use_stderr() { quiet() }"),
+        violations("if error.use_stderr() { quiet() }", false),
         Vec::<&str>::new()
     );
+}
+
+// Only the top-level `main.rs` and `output.rs` are exempt, not files of the same name deeper in.
+#[test]
+fn the_exemptions_are_exact_paths() {
+    let src = Path::new("/repo/src");
+    assert!(is_top_level(src, Path::new("/repo/src/main.rs"), "main.rs"));
+    assert!(is_top_level(
+        src,
+        Path::new("/repo/src/output.rs"),
+        "output.rs"
+    ));
+    assert!(!is_top_level(
+        src,
+        Path::new("/repo/src/sub/main.rs"),
+        "main.rs"
+    ));
+    assert!(!is_top_level(
+        src,
+        Path::new("/repo/src/sub/output.rs"),
+        "output.rs"
+    ));
 }
 
 // The walk reaches files in subdirectories.

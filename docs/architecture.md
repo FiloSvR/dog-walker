@@ -22,8 +22,8 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 Invariants, each with the test that checks it:
 
 - A config has exactly one main profile and only known keys and harnesses: `at3_*` and `at2_*` in `tests/cli.rs`.
-- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()` anywhere but `main.rs`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
-- A row of `profiles` can always be split: `model` and `effort` hold no control or line-separator characters (including U+2028 and U+2029), and `-` means no effort: `at2_unprintable_or_reserved_values_are_rejected`, `profiles_rows_have_fixed_columns`.
+- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()`, or importing them `as` another name, anywhere but `src/main.rs`; only the top-level `src/output.rs` and `src/main.rs` are exempt, checked by `the_exemptions_are_exact_paths`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
+- A row of `profiles` can always be split: `model` and `effort` hold no control, line-separator or bidirectional-control characters (U+2028, U+2029, U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), and `-` means no effort: `at2_unprintable_or_reserved_values_are_rejected`, `profiles_rows_have_fixed_columns`.
 - No networking or async-runtime crate is a dependency (R19): `deny.toml` bans them (the one list), and `at24_no_networking_crates_in_lockfile` reads that list.
 
 ## Task folder

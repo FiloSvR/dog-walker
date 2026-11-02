@@ -208,17 +208,31 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
     })
 }
 
+/// Characters that make a row of `profiles` unsafe to split or to display: control
+/// characters, the Unicode line and paragraph separators, and the bidirectional controls
+/// that can reorder how a terminal shows the row.
+fn is_unsafe_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{061C}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
 /// A text field must hold something printable, so a row of `profiles` can always be split.
 fn check_text(field: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("`{field}` must not be empty"));
     }
-    if value
-        .chars()
-        .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
-    {
+    if value.chars().any(is_unsafe_char) {
         return Err(format!(
-            "`{field}` must not contain control or line-separator characters"
+            "`{field}` must not contain control, line-separator or bidirectional-control characters"
         ));
     }
     Ok(())
