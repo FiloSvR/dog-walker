@@ -40,16 +40,20 @@ jobs:
           set -euo pipefail
           # If the labels cannot be read, this step fails: the guard fails closed.
           # `labels` is printed before the names so a pull request with no labels still
-          # prints something: an empty result can only mean the call misbehaved, and a body
-          # without a label list makes `jq` fail, so the step fails closed with it. Each label
-          # must be an object with a string name: any other shape fails the filter, and the
-          # step, rather than reading as one label fewer.
+          # prints something: an empty result can only mean the call misbehaved. `jq` fails on
+          # a response without a label list, on a label list that is not an array, and on a
+          # label that is not an object with a string name, and the step fails with it rather
+          # than reading the response as one label fewer.
           if ! response=$(gh api "repos/$REPO/pulls/$PR" --jq '
-            "labels",
-            (.labels[] | if type == "object" and (.name | type) == "string"
-                         then .name
-                         else error("unexpected label shape")
-                         end)
+            if (.labels | type) == "array" then
+              "labels",
+              (.labels[] | if type == "object" and (.name | type) == "string"
+                           then .name
+                           else error("unexpected label shape")
+                           end)
+            else
+              error("the response has no label list")
+            end
           '); then
             echo "Reading the labels failed: failing closed, a review may be owed."
             exit 1

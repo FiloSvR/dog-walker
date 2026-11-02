@@ -158,13 +158,24 @@ fn the_workflow_keeps_the_shape_the_guard_relies_on() {
         lines().any(|line| line == "pull_request_target:"),
         "not a pull_request_target workflow: {text}"
     );
+    // `pull_request_target:` is not matched: the underscore keeps the two apart.
     assert!(
-        !lines().any(|line| line == "pull_request:"),
+        !lines()
+            .any(|line| line.starts_with("pull_request:") || line.starts_with("pull_request :")),
         "also runs on pull_request, and would run the pull request's copy: {text}"
     );
-    assert!(
-        lines().any(|line| line == "pull-requests: read"),
-        "the read-only permission is gone: {text}"
+    let permissions: Vec<&str> = text
+        .lines()
+        .skip_while(|line| line.trim() != "permissions:")
+        .skip(1)
+        .take_while(|line| line.starts_with(' '))
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    assert_eq!(
+        permissions,
+        ["pull-requests: read"],
+        "the permissions are not the one read-only scope: {text}"
     );
     assert!(
         !text.contains("uses:"),
@@ -244,6 +255,22 @@ fn a_response_without_labels_is_red() {
         "no-labels-field",
         &[("gh", GH_STUB)],
         &[("STUB_BODY", "{}")],
+    );
+    assert_eq!(out.status.code(), Some(1), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("Reading the labels failed"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+// A `labels` value that is not a list fails closed, even though `jq` would iterate an object.
+#[test]
+fn a_label_list_that_is_not_a_list_is_red() {
+    let out = run_guard(
+        "labels-object",
+        &[("gh", GH_STUB)],
+        &[("STUB_BODY", r#"{"labels":{}}"#)],
     );
     assert_eq!(out.status.code(), Some(1), "stdout: {}", stdout(&out));
     assert!(
