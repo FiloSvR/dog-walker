@@ -1158,7 +1158,7 @@ fn at22_extra_dirs_and_variables_reach_the_harness() {
     assert!(handover.contains("read: from the shared dir"), "{handover}");
     assert!(handover.contains("write: ok"), "{handover}");
     assert!(
-        handover.contains("- environment: TEST_VALUE, TEST_READ, TEST_WRITE"),
+        handover.contains("- environment: TEST_VALUE, TEST_READ, TEST_WRITE, PATH"),
         "{handover}"
     );
     assert!(

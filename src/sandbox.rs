@@ -44,7 +44,7 @@ impl Policy {
             }
         };
         let mut names = self.env.clone();
-        if names.is_empty() {
+        if !names.iter().any(|name| name == "PATH") {
             names.push("PATH".to_owned());
         }
         format!(
@@ -191,6 +191,17 @@ impl Plan {
         }
         command.arg("--proc").arg("/proc");
         command.arg("--dev").arg("/dev");
+        // The profile's directories are mounted before the project and its protections, so a
+        // directory that contains them cannot undo the project bind, the read-only `.git` or
+        // the read-only handover.
+        for dir in &self.policy.read_only_dirs {
+            let dir = canonical(dir)?;
+            command.arg("--ro-bind").arg(&dir).arg(&dir);
+        }
+        for dir in &self.policy.writable_dirs {
+            let dir = canonical(dir)?;
+            command.arg("--bind").arg(&dir).arg(&dir);
+        }
         command.arg("--bind").arg(project).arg(project);
         let git = project.join(".git");
         if !self.policy.git_writable && git.exists() {
@@ -200,14 +211,6 @@ impl Plan {
         // or brief (R10, R12).
         if handover.exists() {
             command.arg("--ro-bind").arg(handover).arg(handover);
-        }
-        for dir in &self.policy.read_only_dirs {
-            let dir = canonical(dir)?;
-            command.arg("--ro-bind").arg(&dir).arg(&dir);
-        }
-        for dir in &self.policy.writable_dirs {
-            let dir = canonical(dir)?;
-            command.arg("--bind").arg(&dir).arg(&dir);
         }
         if !self.policy.network {
             command.arg("--unshare-net");
@@ -419,6 +422,41 @@ mod tests {
             args.windows(3).any(|w| w == ["--ro-bind", &git, &git]),
             "{args:?}"
         );
+        fs::remove_dir_all(&project).unwrap();
+    }
+
+    #[test]
+    fn the_protections_are_mounted_after_the_profile_directories() {
+        if !available() {
+            return;
+        }
+        let project = project("order");
+        fs::create_dir_all(project.join(".git")).unwrap();
+        let handover = project.join("handover.md");
+        fs::File::create(&handover).unwrap();
+        let mut profile = profile();
+        // A writable directory that contains the project: the project's own bind, the
+        // read-only `.git` and the read-only handover must still come after it.
+        profile.writable_dirs = vec![project.parent().unwrap().to_path_buf()];
+        let plan = Plan::new(&profile, false).unwrap();
+        let command = plan
+            .command(&profile, &project, "the brief", &[], &handover)
+            .unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let at = |flag: &str, path: &Path| {
+            let path = path.display().to_string();
+            args.windows(3)
+                .position(|window| window == [flag, &path, &path])
+                .unwrap_or_else(|| panic!("{flag} {path} is missing: {args:?}"))
+        };
+        let writable = at("--bind", project.parent().unwrap());
+        let git = at("--ro-bind", &project.join(".git"));
+        let handover = at("--ro-bind", &handover);
+        assert!(writable < git, "{args:?}");
+        assert!(writable < handover, "{args:?}");
         fs::remove_dir_all(&project).unwrap();
     }
 
