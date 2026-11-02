@@ -13,7 +13,11 @@ The fake harness is a small test-only binary with scripted behaviours (write a
 result, write a malformed one, hang, read its environment, attempt a forbidden
 write, try the network, call `run`). Sandbox tests use the real `bwrap`, since
 they check OS-level effects; they are skipped with a loud message when `bwrap`
-or user namespaces are missing. Everything runs offline. The AT id is in the
+or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to any
+non-empty value, `0` included (CI sets `1`), in which case a missing sandbox fails them. Every sandbox
+test starts with the `sandbox_available` helper in `tests/cli.rs`; today that is
+`at24_works_without_network`. A skipped test still reports `ok`; its SKIPPED line is printed to stderr, which cargo
+shows even for a passing test. Everything runs offline. The AT id is in the
 test name, and a failing test prints the fake harness's output.
 
 ## Commands
@@ -22,6 +26,20 @@ test name, and a failing test prints the fake harness's output.
 - Check (format, lint, dependency rules): `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo deny check`.
 - Format fix: `cargo fmt`.
 - Tools: `cargo install --locked cargo-deny`. Building any crate needs a C linker (`gcc`).
+
+## CI
+
+`.github/workflows/ci.yml` runs on every pull request and every push to `main`:
+
+- `check`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check`.
+- `test`: the whole suite, `cargo test --no-fail-fast`.
+
+The sandbox tests run on the runner, not skipped: the `test` job installs `bubblewrap` and
+switches off Ubuntu's AppArmor restriction on unprivileged user namespaces, and sets
+`DOG_WALKER_REQUIRE_SANDBOX=1`, which turns a skip into a failure, so a runner that cannot
+sandbox is noticed. Third-party actions are not used; the two official ones (`actions/checkout`,
+`actions/cache`) are pinned to a commit. Only downloaded crates and the `cargo-deny` binary are
+cached, never build output, so a poisoned cache cannot become a build.
 
 ## Dependencies
 

@@ -187,15 +187,47 @@ fn at27_instructions_name_run_exit_code_and_handover() {
     assert!(text.contains("handover.md"), "{text}");
 }
 
-// AT24 (R19): a normal invocation makes no network request of its own: it works in a
-// network-less namespace. Skipped, loudly, where bwrap is unavailable.
-#[test]
-fn at24_works_without_network() {
+/// Whether a missing sandbox must fail the sandbox tests instead of skipping them: true when
+/// `DOG_WALKER_REQUIRE_SANDBOX` is set to any non-empty value (CI sets it to `1`).
+fn sandbox_required(value: Option<std::ffi::OsString>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
+}
+
+/// The start of every sandbox test: true when `bwrap` works here. Where it does not, the test
+/// is skipped with a loud message, or fails if the sandbox is required.
+fn sandbox_available(test: &str) -> bool {
     let probe = Command::new("bwrap")
         .args(["--ro-bind", "/", "/", "--unshare-net", "true"])
         .output();
-    if !matches!(probe, Ok(ref o) if o.status.success()) {
-        eprintln!("SKIPPED at24_works_without_network: bwrap or user namespaces unavailable");
+    if matches!(probe, Ok(ref output) if output.status.success()) {
+        return true;
+    }
+    assert!(
+        !sandbox_required(std::env::var_os("DOG_WALKER_REQUIRE_SANDBOX")),
+        "bwrap or user namespaces are unavailable, but DOG_WALKER_REQUIRE_SANDBOX is set"
+    );
+    // Not `eprintln!`: the print lints exempt `#[test]` functions, not their helpers.
+    let message = format!("SKIPPED {test}: bwrap or user namespaces unavailable\n");
+    let _ = std::io::Write::write_all(&mut std::io::stderr(), message.as_bytes());
+    false
+}
+
+// The switch that stops CI from silently skipping the sandbox tests: any non-empty value
+// requires the sandbox; unset or empty does not.
+#[test]
+fn require_sandbox_switch_needs_a_non_empty_value() {
+    let value = |text: &str| Some(std::ffi::OsString::from(text));
+    assert!(!sandbox_required(None));
+    assert!(!sandbox_required(value("")));
+    assert!(sandbox_required(value("1")));
+    assert!(sandbox_required(value("yes")));
+}
+
+// AT24 (R19): a normal invocation makes no network request of its own: it works in a
+// network-less namespace.
+#[test]
+fn at24_works_without_network() {
+    if !sandbox_available("at24_works_without_network") {
         return;
     }
     let dir = TempDir::new("at24");
