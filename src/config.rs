@@ -349,6 +349,18 @@ fn check_text(field: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The project's own policy, `.dog-walker/config.toml`, which may only tighten the profile.
+pub fn project_config(project: &Path) -> Result<Option<crate::sandbox::Request>, ConfigError> {
+    let path = project.join(".dog-walker").join("config.toml");
+    match fs::read_to_string(&path) {
+        Ok(text) => toml::from_str(&text)
+            .map(Some)
+            .map_err(|source| ConfigError::ProjectConfig { path, source }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(ConfigError::ReadProjectConfig { path, source }),
+    }
+}
+
 /// Where the config file is when `--config` is not given: `$XDG_CONFIG_HOME` if it is an
 /// absolute path, otherwise `$HOME/.config`.
 pub fn default_path(xdg_config_home: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {

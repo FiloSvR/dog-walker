@@ -1457,6 +1457,90 @@ fn no_process_runs(path: &Path) -> bool {
     }
 }
 
+/// Writes `.dog-walker/config.toml` in the project.
+fn project_config(fixture: &Fixture, text: &str) {
+    let dir = fixture.project.join(".dog-walker");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("config.toml"), text).unwrap();
+}
+
+// AT4 (R3): a project config may tighten the policy it inherits.
+#[test]
+fn at4_a_project_config_can_tighten() {
+    if !sandbox_available("at4_a_project_config_can_tighten") {
+        return;
+    }
+    let fixture = Fixture::new("at4-tight", "result");
+    project_config(&fixture, "network = false\n");
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        fixture.handover().contains("- network: off"),
+        "{}",
+        fixture.handover()
+    );
+}
+
+// AT4 (R3): a project config that loosens is rejected, and the field is named.
+#[test]
+fn at4_a_project_config_that_loosens_is_named() {
+    let fixture = Fixture::with_policy("at4-loose", "result", "network = false");
+    project_config(&fixture, "network = true\n");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("project config") && err.contains("network"),
+        "{err}"
+    );
+    assert!(!fixture.tasks().exists());
+}
+
+// AT4 (R3): a project config may not add a directory the profile does not list.
+#[test]
+fn at4_a_project_config_cannot_add_a_directory() {
+    let fixture = Fixture::new("at4-dir", "result");
+    project_config(&fixture, "read_only_dirs = [\"/etc\"]\n");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("read_only_dirs"), "{}", stderr(&out));
+}
+
+// AT4 (R3): a project config that is not TOML is named.
+#[test]
+fn at4_a_malformed_project_config_is_named() {
+    let fixture = Fixture::new("at4-bad", "result");
+    project_config(&fixture, "network = \n");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("config.toml"), "{}", stderr(&out));
+}
+
+// AT4 (R3): a task request may tighten the network, and may not loosen it.
+#[test]
+fn at4_a_task_request_may_only_tighten() {
+    if !sandbox_available("at4_a_task_request_may_only_tighten") {
+        return;
+    }
+    let fixture = Fixture::new("at4-task", "result");
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing.", "--network", "off"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        fixture.handover().contains("- network: off"),
+        "{}",
+        fixture.handover()
+    );
+
+    let fixture = Fixture::with_policy("at4-task-loose", "result", "network = false");
+    let out = fixture.run(&["run", "alpha", "Do the thing.", "--network", "on"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("task request") && err.contains("network"),
+        "{err}"
+    );
+}
+
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.
 fn sandbox_required(value: Option<std::ffi::OsString>) -> bool {
     value.is_some_and(|value| !value.is_empty())

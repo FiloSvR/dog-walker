@@ -65,3 +65,12 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    point. The cost is that a harness needing configuration in `$HOME` or scratch in `/tmp`
    must have those directories listed; adapters (#10) can declare them.
    Discussion: issue #4.
+
+9. **A project or a task may only tighten the policy, and adding a directory counts as
+   loosening** (D9, 2026-11-03). The profile is the user's policy; a project's
+   `.dog-walker/config.toml` and a task's `--network`/`--git` flags are compared field by field
+   with it and refused when they would widen it, naming the field and who asked. Shrinking the
+   directory or environment lists is a tightening; adding a read-only directory is not, since
+   it gives the harness more to read, even though it looks cautious. Rejected: merging the
+   lists, which would let a repository grant itself access to the machine.
+   Discussion: issue #6.

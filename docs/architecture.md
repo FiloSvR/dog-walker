@@ -114,6 +114,20 @@ Checks: `at8_a_denied_operation_fails_the_task_and_is_traceable`,
 `at21_a_host_secret_is_invisible`, `at22_without_bwrap_*`, `at25_extra_dirs_and_variables_reach_the_harness`,
 `at26_git_*`, and the unit tests in `src/sandbox.rs`.
 
+## Project and task settings
+
+A profile is the policy (R3). A project's `.dog-walker/config.toml` and a task's `--network` and
+`--git` flags may only tighten it: the network can go off but not on, `.git` can go from
+writable to read-only but not back, and the directory and environment lists can shrink but not
+grow (adding a read-only directory is more to read, so it is a loosening too). Anything else is
+rejected, naming the field and who asked. The effective policy is what the handover records.
+`Plan::from_policy` builds the sandbox from it.
+
+Checks: `at4_a_project_config_can_tighten`, `at4_a_project_config_that_loosens_is_named`,
+`at4_a_project_config_cannot_add_a_directory`, `at4_a_malformed_project_config_is_named`,
+`at4_a_task_request_may_only_tighten`, and `a_request_may_tighten_and_is_named_when_it_loosens`
+in `src/sandbox.rs`.
+
 ## Stopping a task
 
 The harness leads a process group of its own, so a stop takes the processes in that group. `run`

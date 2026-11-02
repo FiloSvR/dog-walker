@@ -13,8 +13,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde::Deserialize;
+
 use crate::config::Profile;
-use crate::error::SandboxError;
+use crate::error::{OverrideError, SandboxError};
 
 /// The parts of the host a sandboxed process needs in order to run at all, read-only.
 const SYSTEM: [&str; 5] = ["/bin", "/sbin", "/usr", "/lib", "/lib64"];
@@ -54,7 +56,7 @@ pub struct Policy {
 
 impl Policy {
     /// The policy the profile asks for, with its directories canonical and checked.
-    fn checked(profile: &Profile) -> Result<Policy, SandboxError> {
+    pub fn checked(profile: &Profile) -> Result<Policy, SandboxError> {
         let read_only_dirs = directories(&profile.read_only_dirs)?;
         let writable_dirs = directories(&profile.writable_dirs)?;
         for dir in &read_only_dirs {
@@ -117,6 +119,100 @@ impl Policy {
     }
 }
 
+/// A policy someone asks for on top of another: absent fields inherit, and a present one may
+/// only tighten. This is what a project's `.dog-walker/config.toml` and a task's flags carry.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Request {
+    pub network: Option<bool>,
+    pub git: Option<String>,
+    pub read_only_dirs: Option<Vec<PathBuf>>,
+    pub writable_dirs: Option<Vec<PathBuf>>,
+    pub env: Option<Vec<String>>,
+}
+
+impl Request {
+    /// The policy this request makes out of `parent`, or the field it would loosen. `origin`
+    /// says who asked: the project config or the task.
+    pub fn resolve(&self, parent: &Policy, origin: &str) -> Result<Policy, OverrideError> {
+        let loosens = |field: &'static str, detail: String| OverrideError::Loosens {
+            origin: origin.to_owned(),
+            field,
+            detail,
+        };
+        let network = self.network.unwrap_or(parent.network);
+        if network && !parent.network {
+            return Err(loosens(
+                "network",
+                "the policy it inherits has the network off".to_owned(),
+            ));
+        }
+        let git_writable = match self.git.as_deref() {
+            None => parent.git_writable,
+            Some("read-only") => false,
+            Some("writable") => true,
+            Some(other) => {
+                return Err(OverrideError::Git {
+                    origin: origin.to_owned(),
+                    value: other.to_owned(),
+                });
+            }
+        };
+        if git_writable && !parent.git_writable {
+            return Err(loosens(
+                "git",
+                "the policy it inherits keeps `.git` read-only".to_owned(),
+            ));
+        }
+        let read_only_dirs = self
+            .read_only_dirs
+            .clone()
+            .unwrap_or_else(|| parent.read_only_dirs.clone());
+        if let Some(dir) = read_only_dirs
+            .iter()
+            .find(|dir| !parent.read_only_dirs.contains(dir))
+        {
+            return Err(loosens(
+                "read_only_dirs",
+                format!(
+                    "`{}` is not one the policy it inherits lists",
+                    dir.display()
+                ),
+            ));
+        }
+        let writable_dirs = self
+            .writable_dirs
+            .clone()
+            .unwrap_or_else(|| parent.writable_dirs.clone());
+        if let Some(dir) = writable_dirs
+            .iter()
+            .find(|dir| !parent.writable_dirs.contains(dir))
+        {
+            return Err(loosens(
+                "writable_dirs",
+                format!(
+                    "`{}` is not one the policy it inherits lists",
+                    dir.display()
+                ),
+            ));
+        }
+        let env = self.env.clone().unwrap_or_else(|| parent.env.clone());
+        if let Some(name) = env.iter().find(|name| !parent.env.contains(name)) {
+            return Err(loosens(
+                "env",
+                format!("`{name}` is not one the policy it inherits lists"),
+            ));
+        }
+        Ok(Policy {
+            network,
+            git_writable,
+            read_only_dirs,
+            writable_dirs,
+            env,
+        })
+    }
+}
+
 /// What a run does about the sandbox.
 #[derive(Debug)]
 pub struct Plan {
@@ -138,6 +234,27 @@ impl Plan {
         }
         let policy = Policy::checked(profile)?;
         above_the_project(&policy, project)?;
+        Ok(Plan {
+            sandboxed: true,
+            policy,
+            bwrap: Some(resolve_bwrap(project)?),
+        })
+    }
+
+    /// The plan for a policy that a project or a task has already tightened.
+    pub fn from_policy(
+        policy: Policy,
+        project: &Path,
+        unsandboxed: bool,
+    ) -> Result<Plan, SandboxError> {
+        above_the_project(&policy, project)?;
+        if unsandboxed {
+            return Ok(Plan {
+                sandboxed: false,
+                policy,
+                bwrap: None,
+            });
+        }
         Ok(Plan {
             sandboxed: true,
             policy,
@@ -461,6 +578,83 @@ mod tests {
     /// A sandbox the test can build: skipped silently when bwrap cannot run here.
     fn plan(profile: &Profile, project: &Path) -> Option<Plan> {
         Plan::new(profile, project, false).ok()
+    }
+
+    #[test]
+    fn a_request_may_tighten_and_is_named_when_it_loosens() {
+        let parent = Policy {
+            network: false,
+            git_writable: true,
+            read_only_dirs: vec![PathBuf::from("/shared")],
+            writable_dirs: vec![PathBuf::from("/cache")],
+            env: vec!["HOME".to_owned()],
+        };
+        // Absent fields inherit.
+        let same = Request::default().resolve(&parent, "the task").unwrap();
+        assert_eq!(same, parent);
+        // Stricter: the network stays off, git becomes read-only, the lists shrink.
+        let tighter = Request {
+            network: Some(false),
+            git: Some("read-only".to_owned()),
+            read_only_dirs: Some(Vec::new()),
+            writable_dirs: Some(Vec::new()),
+            env: Some(Vec::new()),
+        }
+        .resolve(&parent, "the task")
+        .unwrap();
+        assert!(!tighter.git_writable);
+        assert_eq!(tighter.read_only_dirs.len(), 0);
+        // Looser, one field at a time; the `git` one needs a read-only parent.
+        let parent = if parent.git_writable {
+            Policy {
+                git_writable: false,
+                ..parent.clone()
+            }
+        } else {
+            parent.clone()
+        };
+        for (request, field) in [
+            (
+                Request {
+                    network: Some(true),
+                    ..Request::default()
+                },
+                "network",
+            ),
+            // A `git` request against a read-only parent.
+            (
+                Request {
+                    git: Some("writable".to_owned()),
+                    ..Request::default()
+                },
+                "git",
+            ),
+            (
+                Request {
+                    read_only_dirs: Some(vec![PathBuf::from("/etc")]),
+                    ..Request::default()
+                },
+                "read_only_dirs",
+            ),
+            (
+                Request {
+                    writable_dirs: Some(vec![PathBuf::from("/cache"), PathBuf::from("/var")]),
+                    ..Request::default()
+                },
+                "writable_dirs",
+            ),
+            (
+                Request {
+                    env: Some(vec!["HOME".to_owned(), "PATH".to_owned()]),
+                    ..Request::default()
+                },
+                "env",
+            ),
+        ] {
+            let error = request.resolve(&parent, "the project config").unwrap_err();
+            assert!(error.to_string().contains(field), "{field}: {error}");
+            assert!(error.to_string().contains("the project config"), "{error}");
+        }
     }
 
     #[test]
