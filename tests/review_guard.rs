@@ -164,6 +164,16 @@ fn the_workflow_keeps_the_shape_the_guard_relies_on() {
             .any(|line| line.starts_with("pull_request:") || line.starts_with("pull_request :")),
         "also runs on pull_request, and would run the pull request's copy: {text}"
     );
+    // The label events are what let the check go red and green again without a push.
+    assert!(
+        lines().any(|line| line == "types: [opened, reopened, synchronize, labeled, unlabeled]"),
+        "the trigger types changed, and a label change may no longer start a run: {text}"
+    );
+    // The job's name is the ruleset's required context.
+    assert!(
+        lines().any(|line| line == "review-guard:"),
+        "the job is not named review-guard, and the required context is gone: {text}"
+    );
     let permissions: Vec<&str> = text
         .lines()
         .skip_while(|line| line.trim() != "permissions:")

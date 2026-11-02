@@ -42,5 +42,6 @@ Kinds that need a second, independent review, on top of the default list:
 - anything that changes the handover's ownership or write path.
 - anything under `.github/workflows/` and any change to the repository ruleset: `check` and
   `test` run the workflow files a pull request carries, so a pull request can change the checks
-  that gate it (`review-guard` runs from `main` and cannot be changed this way). The second
-  review is always owed, whatever the first rated.
+  that gate it. The guard's own run comes from `main` and cannot be edited that way; the limits
+  it does not cover are in `docs/agents/tracker.md`. The second review is always owed, whatever
+  the first rated.
