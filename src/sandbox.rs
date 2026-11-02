@@ -27,7 +27,7 @@ const FORBIDDEN_ANY: [&str; 3] = ["/proc", "/sys", "/dev"];
 const FORBIDDEN_EXACT: [&str; 2] = ["/run", "/tmp"];
 
 /// The system files a networked harness needs: names, certificates and the loader's cache.
-const SYSTEM_FILES: [&str; 7] = [
+const SYSTEM_FILES: [&str; 8] = [
     "/etc/resolv.conf",
     "/etc/hosts",
     "/etc/nsswitch.conf",
@@ -35,6 +35,8 @@ const SYSTEM_FILES: [&str; 7] = [
     "/etc/ca-certificates",
     "/etc/ld.so.cache",
     "/etc/localtime",
+    // The trust store on Fedora and RHEL: `/etc/ssl/certs` there points into it.
+    "/etc/pki/ca-trust",
 ];
 
 /// The environment a profile's harness gets, and the handover records.
@@ -374,6 +376,15 @@ fn directories(given: &[PathBuf]) -> Result<Vec<PathBuf>, SandboxError> {
         }
         if is_system(&path) {
             return Err(SandboxError::SystemDir { path });
+        }
+        // The handover lists the canonical path; a name that carries a newline or a bidi
+        // control there could forge the record.
+        if path
+            .to_string_lossy()
+            .chars()
+            .any(crate::config::is_unsafe_char)
+        {
+            return Err(SandboxError::Unprintable { path });
         }
         canonical.push(path);
     }

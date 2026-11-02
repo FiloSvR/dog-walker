@@ -256,8 +256,9 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
 
 /// Characters that make a row of `profiles` unsafe to split or to display: control
 /// characters, the Unicode line and paragraph separators, and the bidirectional controls
-/// that can reorder how a terminal shows the row.
-fn is_unsafe_char(c: char) -> bool {
+/// that can reorder how a terminal shows the row. The sandbox refuses them in a directory
+/// name too, since the handover lists those.
+pub fn is_unsafe_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c,

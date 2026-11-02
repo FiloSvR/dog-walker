@@ -99,12 +99,18 @@ git mode, the directories and the variable names (R20). A denial is an `EROFS` o
 `harness.log`, and the policy recorded next to it is what makes it traceable: bwrap does not
 say which rule fired, and dog-walker does not invent one.
 
+Two limits are deliberate. The `DOG_WALKER_*` and allowlisted variable values travel in
+bwrap's argument list, which is world-readable on the host; moving secret values off it is
+#8's. And a `.git` file (a `git worktree` or a submodule) points at a gitdir outside the
+project, which is not mounted, so git commands fail inside; a worktree can list its gitdir as
+a read-only directory.
+
 Without bwrap, `run` exits 2 and names `--unsandboxed`; with the flag, the run is unsandboxed
 and the handover says `tool: none` (R17). A missing harness program is a config error caught
 before a task starts, sandboxed or not.
 
 Checks: `at8_a_denied_operation_fails_the_task_and_is_traceable`,
-`at19_a_write_outside_the_project_is_denied`, `at20_the_network_is_unreachable_when_off`,
+`at19_a_write_outside_the_project_is_denied`, `at20_the_network_is_there_and_can_be_cut`,
 `at21_a_host_secret_is_invisible`, `at22_without_bwrap_*`, `at25_extra_dirs_and_variables_reach_the_harness`,
 `at26_git_*`, and the unit tests in `src/sandbox.rs`.
 

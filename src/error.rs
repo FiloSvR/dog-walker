@@ -116,6 +116,8 @@ pub enum SandboxError {
     SystemDir { path: PathBuf },
     #[error("the directory {} is listed as both read-only and writable", path.display())]
     Overlap { path: PathBuf },
+    #[error("the directory {} has a character the handover cannot list", path.display())]
+    Unprintable { path: PathBuf },
     #[error("bwrap inside the project cannot be trusted: {}", path.display())]
     BwrapInsideProject { path: PathBuf },
 }

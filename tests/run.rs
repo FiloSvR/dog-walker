@@ -1365,6 +1365,71 @@ fn at21_a_host_secret_is_invisible() {
     assert!(!handover.contains("topsecret"), "{handover}");
 }
 
+// AT1 (R1): the model and effort reach a sandboxed harness too.
+#[test]
+fn at1_the_model_and_effort_reach_the_sandboxed_harness() {
+    if !sandbox_available("at1_the_model_and_effort_reach_the_sandboxed_harness") {
+        return;
+    }
+    let fixture = Fixture::new("at1-sandboxed", "result");
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("- tool: bwrap"), "{handover}");
+    assert!(handover.contains("model: local/qwen"), "{handover}");
+    assert!(handover.contains("effort: medium"), "{handover}");
+}
+
+// AT17 (R14): the timeout also works inside the sandbox, and the PID namespace takes the
+// whole tree with it.
+#[test]
+fn at17_a_timeout_inside_the_sandbox_cleans_up() {
+    if !sandbox_available("at17_a_timeout_inside_the_sandbox_cleans_up") {
+        return;
+    }
+    let fixture = Fixture::with_timeout("at17-sandboxed", "hang", Some(0.03));
+    let started = Instant::now();
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert!(
+        fixture.handover().contains("status = \"timed-out\""),
+        "{}",
+        fixture.handover()
+    );
+    assert!(
+        no_process_runs(&fixture.dir.path().join("fake.sh")),
+        "the sandbox tree is still running"
+    );
+}
+
+/// Whether no process on the host is running `path`: inside a PID namespace the harness sees
+/// its own pids, so the host is where the leftovers would be.
+fn no_process_runs(path: &Path) -> bool {
+    let target = path.display().to_string();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut found = false;
+        if let Ok(entries) = fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                if let Ok(bytes) = fs::read(entry.path().join("cmdline")) {
+                    if String::from_utf8_lossy(&bytes).contains(&target) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !found {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.
 fn sandbox_required(value: Option<std::ffi::OsString>) -> bool {
     value.is_some_and(|value| !value.is_empty())
