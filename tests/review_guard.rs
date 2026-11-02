@@ -111,11 +111,11 @@ fn run_guard(name: &str, stubs: &[(&str, &str)], env: &[(&str, &str)]) -> Output
         fs::write(&path, body).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    // Paths stay `OsStr`: the stub directory goes first, the rest is the inherited `PATH`.
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let path =
+        std::env::join_paths(std::iter::once(bin.clone()).chain(std::env::split_paths(&inherited)))
+            .unwrap();
     let mut command = Command::new("bash");
     command
         .arg(&script)
@@ -144,6 +144,32 @@ fn the_extracted_block_is_the_guard() {
     assert!(script.contains("gh api"), "{script}");
     assert!(script.contains("needs/review"), "{script}");
     assert!(script.contains("grep -qxF"), "{script}");
+}
+
+/// The workflow keeps the shape the safety of the guard rests on: it runs from `main` on
+/// `pull_request_target` and nothing else, it holds one read-only permission, and it runs no
+/// action, so no step can be swapped for one from the pull request.
+#[test]
+fn the_workflow_keeps_the_shape_the_guard_relies_on() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(WORKFLOW);
+    let text = fs::read_to_string(&path).unwrap();
+    let lines = || text.lines().map(str::trim);
+    assert!(
+        lines().any(|line| line == "pull_request_target:"),
+        "not a pull_request_target workflow: {text}"
+    );
+    assert!(
+        !lines().any(|line| line == "pull_request:"),
+        "also runs on pull_request, and would run the pull request's copy: {text}"
+    );
+    assert!(
+        lines().any(|line| line == "pull-requests: read"),
+        "the read-only permission is gone: {text}"
+    );
+    assert!(
+        !text.contains("uses:"),
+        "the guard must not run an action: {text}"
+    );
 }
 
 // While the label is on, the check is red even when other labels are present.
@@ -218,6 +244,22 @@ fn a_response_without_labels_is_red() {
         "no-labels-field",
         &[("gh", GH_STUB)],
         &[("STUB_BODY", "{}")],
+    );
+    assert_eq!(out.status.code(), Some(1), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("Reading the labels failed"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+// A label list of the wrong shape fails the guard closed instead of reading as one label fewer.
+#[test]
+fn a_label_of_the_wrong_shape_is_red() {
+    let out = run_guard(
+        "label-shape",
+        &[("gh", GH_STUB)],
+        &[("STUB_BODY", r#"{"labels":["needs/review"]}"#)],
     );
     assert_eq!(out.status.code(), Some(1), "stdout: {}", stdout(&out));
     assert!(

@@ -19,7 +19,10 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: review-guard-${{ github.event.pull_request.number }}
+  # Rollout-only name (#23): the old `pull_request` workflow is still on `main` and groups on
+  # `review-guard-<n>`, and concurrency groups are shared across workflows, so sharing the name
+  # would let either run cancel the other. The step that deletes the old file renames this one.
+  group: review-guard-target-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -38,8 +41,16 @@ jobs:
           # If the labels cannot be read, this step fails: the guard fails closed.
           # `labels` is printed before the names so a pull request with no labels still
           # prints something: an empty result can only mean the call misbehaved, and a body
-          # without a label list makes `jq` fail, so the step fails closed with it.
-          if ! response=$(gh api "repos/$REPO/pulls/$PR" --jq '"labels", (.labels[].name)'); then
+          # without a label list makes `jq` fail, so the step fails closed with it. Each label
+          # must be an object with a string name: any other shape fails the filter, and the
+          # step, rather than reading as one label fewer.
+          if ! response=$(gh api "repos/$REPO/pulls/$PR" --jq '
+            "labels",
+            (.labels[] | if type == "object" and (.name | type) == "string"
+                         then .name
+                         else error("unexpected label shape")
+                         end)
+          '); then
             echo "Reading the labels failed: failing closed, a review may be owed."
             exit 1
           fi
