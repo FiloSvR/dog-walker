@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -77,7 +78,8 @@ pub struct Profile {
     pub harness: Harness,
     pub model: String,
     pub effort: Option<String>,
-    pub timeout_minutes: Option<u32>,
+    /// How long the harness may run; `timeout_minutes` in the file, in minutes.
+    pub timeout: Option<Duration>,
     /// Overrides the adapter's default command: an argv list.
     pub command: Option<Vec<String>>,
     pub main: bool,
@@ -103,7 +105,7 @@ struct RawProfile {
     harness: Option<String>,
     model: Option<String>,
     effort: Option<String>,
-    timeout_minutes: Option<u32>,
+    timeout_minutes: Option<f64>,
     command: Option<Vec<String>>,
     #[serde(default)]
     main: bool,
@@ -187,9 +189,17 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
             ));
         }
     }
-    if raw.timeout_minutes == Some(0) {
-        return Err(fail("`timeout_minutes` must be greater than 0".to_owned()));
-    }
+    let timeout = match raw.timeout_minutes {
+        None => None,
+        Some(minutes) if minutes.is_finite() && minutes > 0.0 => {
+            let seconds = minutes * 60.0;
+            match Duration::try_from_secs_f64(seconds) {
+                Ok(timeout) => Some(timeout),
+                Err(_) => return Err(fail("`timeout_minutes` is too large".to_owned())),
+            }
+        }
+        Some(_) => return Err(fail("`timeout_minutes` must be greater than 0".to_owned())),
+    };
     if raw
         .command
         .as_ref()
@@ -202,7 +212,7 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         harness,
         model,
         effort: raw.effort,
-        timeout_minutes: raw.timeout_minutes,
+        timeout,
         command: raw.command,
         main: raw.main,
     })
@@ -277,7 +287,7 @@ mod tests {
         let profile = &config.profiles()[0];
         assert_eq!(profile.harness, Harness::Dsh);
         assert_eq!(profile.effort.as_deref(), Some("high"));
-        assert_eq!(profile.timeout_minutes, Some(5));
+        assert_eq!(profile.timeout, Some(Duration::from_secs(300)));
         assert_eq!(
             profile.command.as_deref(),
             Some(&["/bin/x".to_owned(), "-y".to_owned()][..])
@@ -285,11 +295,25 @@ mod tests {
     }
 
     #[test]
-    fn zero_timeout_and_empty_command_are_rejected() {
-        assert!(
-            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=0\n").is_err()
-        );
+    fn bad_timeouts_and_empty_commands_are_rejected() {
+        for timeout in ["0", "-1", "nan", "inf"] {
+            assert!(
+                parse(&format!(
+                    "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes={timeout}\n"
+                ))
+                .is_err(),
+                "{timeout}"
+            );
+        }
         assert!(parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ncommand=[]\n").is_err());
+    }
+
+    #[test]
+    fn a_timeout_may_have_a_fraction_of_a_minute() {
+        let config =
+            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=0.5\n")
+                .unwrap();
+        assert_eq!(config.profiles()[0].timeout, Some(Duration::from_secs(30)));
     }
 
     #[test]

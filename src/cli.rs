@@ -7,16 +7,17 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, ExitStatus};
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
 use crate::config::{self, Config};
 use crate::error::{CliError, ConfigError, Error};
-use crate::handover::Handover;
-use crate::launch;
+use crate::handover::{self, Handover};
+use crate::launch::{self, End};
 use crate::output::{self, exit};
 use crate::status::Status;
-use crate::task::Task;
+use crate::task::{Task, TaskId};
 
 const INSTRUCTIONS: &str = include_str!("instructions.md");
 
@@ -55,7 +56,15 @@ enum Command {
         #[arg(long)]
         allow_main: bool,
     },
+    /// Ask a running task to stop
+    Cancel {
+        /// The task id, the number in its folder name
+        id: String,
+    },
 }
+
+/// A task runs for half an hour unless its profile says otherwise.
+const DEFAULT_TIMEOUT: Duration = Duration::from_mins(30);
 
 /// Runs dog-walker with `args` (including the program name) and returns the exit code.
 pub fn run<I, T>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode
@@ -122,6 +131,7 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             stdout,
             stderr,
         ),
+        Command::Cancel { id } => cancel(id, stdout),
     }
 }
 
@@ -206,10 +216,19 @@ fn run_task(
             profile.name
         ),
     );
-    let (status, outcome) = match launch::launch(profile, &task, &project, &brief) {
-        Ok(ended) => outcome(&task, ended),
+    let timeout = profile.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    let (status, outcome) = match launch::launch(profile, &task, &project, &brief, timeout) {
+        Ok(End::Exited(ended)) => outcome(&task, ended),
+        Ok(End::TimedOut) => (
+            Status::TimedOut,
+            format!("The task timed out after {}.", duration_text(timeout)),
+        ),
+        Ok(End::Cancelled) => (Status::Cancelled, "The task was cancelled.".to_owned()),
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
+    // The runner is the one who cleans up after a cancel request, so a marker left by a
+    // cancel that arrived too late does not stay in a finished task.
+    let _ = fs::remove_file(task.directory().join(launch::CANCEL_FILE));
     handover.end(status, &outcome)?;
     save(&handover, &task)?;
     log(stderr, &format!("dog-walker: task {} {status}", task.id()));
@@ -225,6 +244,53 @@ fn save(handover: &Handover, task: &Task) -> Result<(), Error> {
     task.verify()?;
     handover.save(&task.handover_path())?;
     Ok(())
+}
+
+/// A timeout as it reads in the handover.
+fn duration_text(timeout: Duration) -> String {
+    let seconds = timeout.as_secs_f64();
+    if seconds >= 60.0 && (seconds / 60.0).fract() == 0.0 {
+        format!("{} minutes", seconds / 60.0)
+    } else {
+        format!("{seconds} seconds")
+    }
+}
+
+/// Asks a running task to stop, from another shell: a marker the runner watches for. A task
+/// that has already ended is left exactly as it is.
+fn cancel(id: &str, stdout: &mut dyn Write) -> Result<u8, Error> {
+    let id = TaskId::parse(id.trim()).ok_or_else(|| CliError::BadTaskId { id: id.to_owned() })?;
+    let project = std::env::current_dir().map_err(|source| CliError::Project { source })?;
+    let task = Task::find(&project, id)?.ok_or_else(|| CliError::NoTask { id: id.to_string() })?;
+    let handover_path = task.handover_path();
+    let text = fs::read_to_string(&handover_path).map_err(|source| CliError::ReadHandover {
+        path: handover_path,
+        source,
+    })?;
+    if let Some(status) = handover::front_matter(&text)
+        .and_then(|front| Status::parse(&front.status))
+        .filter(|status| status.is_end())
+    {
+        output::line(stdout, &format!("dog-walker: task {id} already {status}"))?;
+        return Ok(exit::SUCCESS);
+    }
+    let marker = task.directory().join(launch::CANCEL_FILE);
+    match fs::File::create_new(&marker) {
+        Ok(_) => {}
+        Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(source) => {
+            return Err(CliError::Cancel {
+                path: marker,
+                source,
+            }
+            .into());
+        }
+    }
+    output::line(
+        stdout,
+        &format!("dog-walker: cancel requested for task {id}"),
+    )?;
+    Ok(exit::SUCCESS)
 }
 
 /// One line of log on stderr, if it can be written.

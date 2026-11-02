@@ -12,12 +12,12 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 |---|---|---|
 | `config` | Profiles and the config file: validated `Profile`, `Harness`, `ProfileName`; exactly one main (R1, R2) | built (#3) |
 | `output` | Writing to stdout and stderr; the exit codes (R6) | built (#3) |
-| `cli` | `profiles`, `instructions` and `run`; parsing, errors to exit codes (R5, R6, R21) | built (#3, #16) |
+| `cli` | `profiles`, `instructions`, `run` and `cancel`; parsing, errors to exit codes (R5, R6, R14, R21) | built (#3, #16, #5) |
 | `error` | One error enum per module, and `Error` | built (#3, #16) |
 | `task` | Atomic id allocation and the task folder (R10) | built (#16) |
 | `handover` | TOML front matter, brief and Result; whole-file rewrite (R11, R12) | built (#16) |
 | `status` | The `Status` type and its transitions (R12) | built (#16) |
-| `launch` | Starting the harness through a profile's `command` and waiting (R5) | built (#16) |
+| `launch` | Starting the harness, waiting, and ending its process group (R5, R14) | built (#16, #5) |
 
 Invariants, each with the test that checks it:
 
@@ -77,6 +77,21 @@ harness that ends with a non-zero status is a failed task, even when it left a r
 (`at16_a_nonzero_exit_is_a_failure`), and the handover path is printed as soon as the handover
 exists, so a failure to write the end state still leaves it on stdout
 (`at7_the_path_comes_before_the_end_state`).
+
+## Stopping a task
+
+The harness leads a process group of its own, so a stop takes everything it started. `run`
+waits by polling the child and ends the tree when the profile's timeout passes (30 minutes by
+default, `timeout_minutes` in the profile), when Ctrl-C or a TERM interrupts the runner, or
+when `cancel <id>` writes `.cancel` into the task folder. The group gets TERM, two seconds,
+then KILL; the handover is closed as `timed-out` or `cancelled`, and the runner removes the
+marker. `cancel` reads the handover first and writes nothing to a task that has already ended.
+
+Checks: `at17_a_timeout_kills_the_tree_and_ends_timed_out`,
+`at18_ctrl_c_kills_the_tree_and_ends_cancelled`,
+`at18_cancel_from_another_shell_kills_the_tree`,
+`at18_cancelling_a_finished_task_changes_nothing`, and the unit tests
+`a_timeout_ends_the_whole_tree` and `a_cancel_marker_ends_the_whole_tree` in `src/launch.rs`.
 
 ## Packaging
 

@@ -36,6 +36,20 @@ impl Status {
         }
     }
 
+    /// Reads a status back from its name in a handover.
+    pub fn parse(text: &str) -> Option<Status> {
+        [
+            Status::Created,
+            Status::Running,
+            Status::Done,
+            Status::Failed,
+            Status::TimedOut,
+            Status::Cancelled,
+        ]
+        .into_iter()
+        .find(|status| status.as_str() == text)
+    }
+
     pub fn is_end(self) -> bool {
         Status::ENDS.contains(&self)
     }

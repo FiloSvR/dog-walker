@@ -139,6 +139,45 @@ impl Task {
         Ok(())
     }
 
+    /// The task with `id` in `project`, if there is one.
+    pub fn find(project: &Path, id: TaskId) -> Result<Option<Task>, TaskError> {
+        let tasks = project.join(".dog-walker").join("tasks");
+        let entries = match fs::read_dir(&tasks) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(TaskError::ReadDir {
+                    path: tasks,
+                    source,
+                });
+            }
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| TaskError::ReadDir {
+                path: tasks.clone(),
+                source,
+            })?;
+            if id_of(&entry.file_name()) == Some(id.value()) {
+                let directory = entry.path();
+                let metadata =
+                    fs::symlink_metadata(&directory).map_err(|source| TaskError::Inspect {
+                        path: directory.clone(),
+                        source,
+                    })?;
+                if !metadata.is_dir() {
+                    continue;
+                }
+                return Ok(Some(Task {
+                    id,
+                    directory,
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn id(&self) -> TaskId {
         self.id
     }

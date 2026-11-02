@@ -96,6 +96,14 @@ pub enum CliError {
     Stdin { source: io::Error },
     #[error("cannot find the project directory: {source}")]
     Project { source: io::Error },
+    #[error("`{id}` is not a task id: it is the number in a task folder's name")]
+    BadTaskId { id: String },
+    #[error("no task {id} in .dog-walker/tasks")]
+    NoTask { id: String },
+    #[error("cannot read the handover {}: {source}", path.display())]
+    ReadHandover { path: PathBuf, source: io::Error },
+    #[error("cannot ask the task to stop: {source}")]
+    Cancel { path: PathBuf, source: io::Error },
 }
 
 /// Everything that can make a command fail.
