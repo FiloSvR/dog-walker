@@ -31,9 +31,11 @@ Read by `plan`, `change` and `review`.
   holds the owner's token (the owner, or an agent acting with it) can remove the label; and
   `check` and `test` run the workflow files the pull request carries. Requiring pull requests
   in the ruleset is the owner's decision.
-  Queued runs: a label change starts a run on the same commit, and the check keeps the result of
-  the earlier run until the new one finishes, so a green check can be a few minutes old. Owner
-  rule: merge only after `review-guard` has finished on the current labels. TODO(#23): record
-  what the merge state showed during a queued run.
+  Queued runs: observed on #24, with the guard that still ran on `pull_request`. Green with the
+  label off, then `needs/review` added: `mergeStateStatus` stayed CLEAN for the couple of
+  seconds before GitHub created the new run, and was BLOCKED from the moment it appeared as
+  queued, through in-progress, until it finished red. A queued run does not leave a stale green
+  check; the green window is only the moment before the run exists. Owner rule: merge only
+  after `review-guard` has finished on the current labels.
 - Board columns: the ones in `plan`.
 - Merge authority: only the owner.
