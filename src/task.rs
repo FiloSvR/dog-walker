@@ -141,7 +141,10 @@ impl Task {
 
     /// The task with `id` in `project`, if there is one.
     pub fn find(project: &Path, id: TaskId) -> Result<Option<Task>, TaskError> {
-        let tasks = project.join(".dog-walker").join("tasks");
+        let root = project.join(".dog-walker");
+        let tasks = root.join("tasks");
+        reject_symlink(&root)?;
+        reject_symlink(&tasks)?;
         let entries = match fs::read_dir(&tasks) {
             Ok(entries) => entries,
             Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),

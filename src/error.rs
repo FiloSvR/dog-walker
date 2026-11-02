@@ -70,6 +70,10 @@ pub enum HandoverError {
 /// Why the harness could not be started or waited for.
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchError {
+    #[error("cannot install the signal handlers: {source}")]
+    Signal { source: io::Error },
+    #[error("the timeout {timeout:?} does not fit a deadline")]
+    Deadline { timeout: std::time::Duration },
     #[error(transparent)]
     Task(#[from] TaskError),
     #[error("profile `{profile}` has no `command` to run")]
@@ -102,7 +106,7 @@ pub enum CliError {
     NoTask { id: String },
     #[error("cannot read the handover {}: {source}", path.display())]
     ReadHandover { path: PathBuf, source: io::Error },
-    #[error("cannot ask the task to stop: {source}")]
+    #[error("cannot ask the task to stop: {}: {source}", path.display())]
     Cancel { path: PathBuf, source: io::Error },
 }
 
@@ -121,4 +125,6 @@ pub enum Error {
     Handover(#[from] HandoverError),
     #[error(transparent)]
     Cli(#[from] CliError),
+    #[error(transparent)]
+    Launch(#[from] LaunchError),
 }

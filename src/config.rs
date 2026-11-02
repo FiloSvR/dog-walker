@@ -11,6 +11,9 @@ use serde::Deserialize;
 
 use crate::error::ConfigError;
 
+/// The longest timeout a profile may ask for, so a deadline always fits an `Instant`.
+const MAX_TIMEOUT: Duration = Duration::from_hours(365 * 24);
+
 /// The harnesses dog-walker can drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Harness {
@@ -191,14 +194,26 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
     }
     let timeout = match raw.timeout_minutes {
         None => None,
-        Some(minutes) if minutes.is_finite() && minutes > 0.0 => {
-            let seconds = minutes * 60.0;
-            match Duration::try_from_secs_f64(seconds) {
-                Ok(timeout) => Some(timeout),
-                Err(_) => return Err(fail("`timeout_minutes` is too large".to_owned())),
-            }
+        Some(minutes) if !minutes.is_finite() || minutes <= 0.0 => {
+            return Err(fail("`timeout_minutes` must be greater than 0".to_owned()));
         }
-        Some(_) => return Err(fail("`timeout_minutes` must be greater than 0".to_owned())),
+        Some(minutes) => {
+            let seconds = minutes * 60.0;
+            let Ok(timeout) = Duration::try_from_secs_f64(seconds) else {
+                return Err(fail("`timeout_minutes` is too large".to_owned()));
+            };
+            if timeout.is_zero() {
+                return Err(fail("`timeout_minutes` is too small".to_owned()));
+            }
+            // A deadline is added to an `Instant`, which has a smaller range than `Duration`;
+            // a year is the most a task may ask for, and it keeps that addition total.
+            if timeout > MAX_TIMEOUT {
+                return Err(fail(
+                    "`timeout_minutes` must be at most 525600 (a year)".to_owned(),
+                ));
+            }
+            Some(timeout)
+        }
     };
     if raw
         .command
@@ -296,7 +311,7 @@ mod tests {
 
     #[test]
     fn bad_timeouts_and_empty_commands_are_rejected() {
-        for timeout in ["0", "-1", "nan", "inf"] {
+        for timeout in ["0", "-1", "nan", "inf", "1.6e17", "1e-300", "525601"] {
             assert!(
                 parse(&format!(
                     "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes={timeout}\n"

@@ -195,6 +195,8 @@ fn run_task(
         }
         .into());
     }
+    // A Ctrl-C from here on is a cancel that closes the handover, not a dead runner.
+    launch::watch_for_interrupts()?;
     let brief = brief(task, file)?;
     let project = std::env::current_dir().map_err(|source| CliError::Project { source })?;
     let task = Task::create(&project, &brief)?;
@@ -226,11 +228,11 @@ fn run_task(
         Ok(End::Cancelled) => (Status::Cancelled, "The task was cancelled.".to_owned()),
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
-    // The runner is the one who cleans up after a cancel request, so a marker left by a
-    // cancel that arrived too late does not stay in a finished task.
-    let _ = fs::remove_file(task.directory().join(launch::CANCEL_FILE));
     handover.end(status, &outcome)?;
     save(&handover, &task)?;
+    // Only now that the end state is on disk: a cancel that arrives later reads it and backs
+    // off, and one that arrived earlier finds nothing to do.
+    let _ = fs::remove_file(task.directory().join(launch::CANCEL_FILE));
     log(stderr, &format!("dog-walker: task {} {status}", task.id()));
     Ok(if status == Status::Done {
         exit::SUCCESS
@@ -262,18 +264,12 @@ fn cancel(id: &str, stdout: &mut dyn Write) -> Result<u8, Error> {
     let id = TaskId::parse(id.trim()).ok_or_else(|| CliError::BadTaskId { id: id.to_owned() })?;
     let project = std::env::current_dir().map_err(|source| CliError::Project { source })?;
     let task = Task::find(&project, id)?.ok_or_else(|| CliError::NoTask { id: id.to_string() })?;
-    let handover_path = task.handover_path();
-    let text = fs::read_to_string(&handover_path).map_err(|source| CliError::ReadHandover {
-        path: handover_path,
-        source,
-    })?;
-    if let Some(status) = handover::front_matter(&text)
-        .and_then(|front| Status::parse(&front.status))
-        .filter(|status| status.is_end())
-    {
+    task.verify()?;
+    if let Some(status) = finished_status(&task)? {
         output::line(stdout, &format!("dog-walker: task {id} already {status}"))?;
         return Ok(exit::SUCCESS);
     }
+    task.verify()?;
     let marker = task.directory().join(launch::CANCEL_FILE);
     match fs::File::create_new(&marker) {
         Ok(_) => {}
@@ -286,11 +282,49 @@ fn cancel(id: &str, stdout: &mut dyn Write) -> Result<u8, Error> {
             .into());
         }
     }
+    // The runner may have closed the task between the read and the marker: take the request
+    // back rather than leave a marker in a finished task.
+    if let Some(status) = finished_status(&task)? {
+        let _ = fs::remove_file(&marker);
+        output::line(stdout, &format!("dog-walker: task {id} already {status}"))?;
+        return Ok(exit::SUCCESS);
+    }
     output::line(
         stdout,
         &format!("dog-walker: cancel requested for task {id}"),
     )?;
     Ok(exit::SUCCESS)
+}
+
+/// The end status in a task's handover, if it has one. A missing handover, or one that is not
+/// a regular file, is not an end: reading it must not follow a link or block on a pipe.
+fn finished_status(task: &Task) -> Result<Option<Status>, CliError> {
+    let path = task.handover_path();
+    let before = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(CliError::ReadHandover { path, source }),
+    };
+    if !before.file_type().is_file() {
+        return Ok(None);
+    }
+    let mut file = fs::File::open(&path).map_err(|source| CliError::ReadHandover {
+        path: path.clone(),
+        source,
+    })?;
+    let opened = file.metadata().map_err(|source| CliError::ReadHandover {
+        path: path.clone(),
+        source,
+    })?;
+    if !opened.is_file() || opened.dev() != before.dev() || opened.ino() != before.ino() {
+        return Ok(None);
+    }
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .map_err(|source| CliError::ReadHandover { path, source })?;
+    Ok(handover::front_matter(&text)
+        .and_then(|front| Status::parse(&front.status))
+        .filter(|status| status.is_end()))
 }
 
 /// One line of log on stderr, if it can be written.

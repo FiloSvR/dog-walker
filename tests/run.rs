@@ -864,6 +864,19 @@ fn at18_cancelling_a_finished_task_changes_nothing() {
     );
 }
 
+// R14: `cancel` refuses a tasks root that is a link, like `run` does.
+#[test]
+fn cancel_refuses_a_symlinked_tasks_root() {
+    let fixture = Fixture::new("cancel-symlink", "result");
+    let outside = fixture.dir.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, fixture.project.join(".dog-walker")).unwrap();
+    let out = fixture.run(&["cancel", "0001"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("symbolic link"), "{}", stderr(&out));
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+}
+
 // R14: `cancel` names a task it cannot find, and a value that is not an id.
 #[test]
 fn cancel_names_a_missing_or_bad_id() {

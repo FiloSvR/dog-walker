@@ -113,7 +113,7 @@ pub fn launch(
     }
     // The handler is installed before anything runs: a Ctrl-C while the harness starts is a
     // cancel like any other, not a dead runner and a live task.
-    let _ = interrupted();
+    install()?;
     let mut child = command.spawn().map_err(|source| LaunchError::Spawn {
         program: program.into(),
         source,
@@ -123,11 +123,23 @@ pub fn launch(
 }
 
 /// Waits for the harness: it ends, the marker appears, the deadline passes, or Ctrl-C.
+///
+/// The child is checked before the deadline, so a harness that ends just after its deadline
+/// is `done` with its result kept, not `timed-out`: the run that finished is not thrown away.
 fn wait(child: &mut Child, cancel: &Path, timeout: Duration) -> Result<End, LaunchError> {
-    let deadline = Instant::now() + timeout;
+    let Some(deadline) = Instant::now().checked_add(timeout) else {
+        let _ = end(child);
+        return Err(LaunchError::Deadline { timeout });
+    };
     loop {
-        if let Some(status) = child.try_wait().map_err(wait_error)? {
-            return Ok(End::Exited(status));
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(End::Exited(status)),
+            Ok(None) => {}
+            Err(source) => {
+                // A runner that cannot wait for its child must not leave the group running.
+                let _ = end(child);
+                return Err(wait_error(source));
+            }
         }
         if cancel.exists() || interrupted() {
             end(child)?;
@@ -142,17 +154,29 @@ fn wait(child: &mut Child, cancel: &Path, timeout: Duration) -> Result<End, Laun
 }
 
 /// Ends the harness's whole process group: TERM first, KILL when it does not go.
+///
+/// The leader is reaped by the polling, so the last KILL can race a reused process-group id in
+/// a window of microseconds; the alternative, sleeping the whole grace before the KILL, would
+/// make every stop wait for it.
 fn end(child: &mut Child) -> Result<(), LaunchError> {
-    // A pid that does not fit an `i32` cannot be a process group; there is nothing to kill.
-    let Ok(group) = i32::try_from(child.id()) else {
-        return Ok(());
-    };
-    let Some(group) = Pid::from_raw(group) else {
-        return Ok(());
+    let group = i32::try_from(child.id()).ok().and_then(Pid::from_raw);
+    let Some(group) = group else {
+        // No group to signal: end the child itself and reap it anyway.
+        let _ = child.kill();
+        return child.wait().map(|_| ()).map_err(wait_error);
     };
     let _ = kill_process_group(group, Signal::TERM);
+    let mut failure = None;
     let deadline = Instant::now() + GRACE;
-    while child.try_wait().map_err(wait_error)?.is_none() {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(source) => {
+                failure = Some(source);
+                break;
+            }
+        }
         if Instant::now() >= deadline {
             break;
         }
@@ -160,26 +184,51 @@ fn end(child: &mut Child) -> Result<(), LaunchError> {
     }
     // Whatever is left of the group goes now, including children that outlived the leader.
     let _ = kill_process_group(group, Signal::KILL);
-    let _ = child.wait().map_err(wait_error)?;
-    Ok(())
+    if let Err(source) = child.wait() {
+        failure.get_or_insert(source);
+    }
+    match failure {
+        Some(source) => Err(wait_error(source)),
+        None => Ok(()),
+    }
 }
 
 fn wait_error(source: std::io::Error) -> LaunchError {
     LaunchError::Wait { source }
 }
 
-/// Whether Ctrl-C (or a TERM to the runner) has arrived. Installs the handlers on first use.
-fn interrupted() -> bool {
-    static INTERRUPTED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
-    INTERRUPTED
-        .get_or_init(|| {
-            let flag = Arc::new(AtomicBool::new(false));
-            let _ = signal_hook::flag::register(SIGINT, Arc::clone(&flag));
-            let _ = signal_hook::flag::register(SIGTERM, Arc::clone(&flag));
-            flag
-        })
-        .load(Ordering::Relaxed)
+/// Installs the Ctrl-C and TERM handlers once, so a stop closes the handover instead of
+/// killing the runner outright.
+fn install() -> Result<(), LaunchError> {
+    if INTERRUPTED.get().is_some() {
+        return Ok(());
+    }
+    let flag = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(SIGINT, Arc::clone(&flag)).map_err(wait_error)?;
+    signal_hook::flag::register(SIGTERM, Arc::clone(&flag)).map_err(wait_error)?;
+    let _ = INTERRUPTED.set(flag);
+    Ok(())
 }
+
+/// Installs the handlers and clears the flag: a run starts with no cancel from an earlier one
+/// in the same process. Called before the first handover is written, so a Ctrl-C during setup
+/// is a cancel too.
+pub fn watch_for_interrupts() -> Result<(), LaunchError> {
+    install()?;
+    if let Some(flag) = INTERRUPTED.get() {
+        flag.store(false, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+/// Whether Ctrl-C (or a TERM to the runner) has arrived.
+fn interrupted() -> bool {
+    INTERRUPTED
+        .get()
+        .is_some_and(|flag| flag.load(Ordering::Relaxed))
+}
+
+static INTERRUPTED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 #[cfg(test)]
 mod tests {
