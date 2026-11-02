@@ -102,10 +102,24 @@ pub fn launch(
     // The handler is installed before anything runs: a Ctrl-C while the harness starts is a
     // cancel like any other, not a dead runner and a live task.
     install()?;
-    let mut child = command.spawn().map_err(|source| LaunchError::Spawn {
-        program: command.get_program().to_owned(),
-        source,
-    })?;
+    let program = command.get_program().to_owned();
+    let mut attempts = 0;
+    let mut child = loop {
+        match command.spawn() {
+            Ok(child) => break child,
+            // A harness that is being written at this moment (a fresh install, a test) is
+            // transiently busy; it is worth another try before the task is called failed.
+            Err(source)
+                if source.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 5 =>
+            {
+                attempts += 1;
+                thread::sleep(POLL);
+            }
+            Err(source) => {
+                return Err(LaunchError::Spawn { program, source });
+            }
+        }
+    };
     drop(child.stdin.take());
     wait(&mut child, &task.directory().join(CANCEL_FILE), timeout)
 }
