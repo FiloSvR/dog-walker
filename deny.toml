@@ -1,0 +1,32 @@
+# cargo-deny configuration: licences, advisories, bans and sources.
+# Keeps the R19 promise in the tooling: no networking or async-runtime crate gets in.
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[advisories]
+version = 2
+
+[licenses]
+version = 2
+allow = ["MIT", "Apache-2.0", "Unicode-3.0"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    { name = "tokio" },
+    { name = "async-std" },
+    { name = "reqwest" },
+    { name = "hyper" },
+    { name = "ureq" },
+    { name = "openssl" },
+    { name = "rustls" },
+    { name = "socket2" },
+    { name = "mio" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

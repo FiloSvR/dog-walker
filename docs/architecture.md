@@ -3,6 +3,28 @@
 Components, processes and the invariants, each with the test that checks it.
 Work in progress: grows as the issues land.
 
+## Components
+
+One crate: a library (`dog_walker`) and a thin binary (`dog-walker`). Errors stay inside their
+module; only `cli` turns them into a message and an exit code. Only `output` writes.
+
+| Module | Owns | Status |
+|---|---|---|
+| `config` | Profiles and the config file: validated `Profile`, `Harness`, `ProfileName`; exactly one main (R1, R2) | built (#3) |
+| `output` | Writing to stdout and stderr; the exit codes (R6) | built (#3) |
+| `cli` | `profiles` and `instructions`; parsing, errors to exit codes (R21) | built (#3) |
+| `error` | `ConfigError` and `Error` | built (#3) |
+| `task` | Atomic id allocation and the task folder (R10) | planned (#16) |
+| `handover` | TOML front matter, brief and Result; whole-file rewrite (R11, R12) | planned (#16) |
+| `status` | The `Status` type and its transitions (R12) | planned (#16) |
+| `launch` | Starting the harness through a profile's `command` and waiting (R5) | planned (#16) |
+
+Invariants, each with the test that checks it:
+
+- A config has exactly one main profile and only known keys and harnesses: `at3_*` and `at2_*` in `tests/cli.rs`.
+- Nothing but `output` prints, and stdout carries results only: the print lints in `Cargo.toml`, and `at2_missing_model_names_profile_and_field`.
+- No networking or async-runtime crate is a dependency (R19): `deny.toml` bans them, and `at24_no_networking_crates_in_lockfile`.
+
 ## Task folder
 
 `.dog-walker/tasks/<id>-<slug>/` holds, per task:
