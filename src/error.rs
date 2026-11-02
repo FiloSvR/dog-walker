@@ -118,6 +118,8 @@ pub enum SandboxError {
     Overlap { path: PathBuf },
     #[error("the directory {} has a character the handover cannot list", path.display())]
     Unprintable { path: PathBuf },
+    #[error("the read-only directory {} contains the project: it would make the run unwritable", path.display())]
+    AboveProject { path: PathBuf },
     #[error("bwrap inside the project cannot be trusted: {}", path.display())]
     BwrapInsideProject { path: PathBuf },
 }

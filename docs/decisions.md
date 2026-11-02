@@ -54,8 +54,9 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    `kill` from the canceller. Discussion: issue #5.
 
 8. **The sandbox shows the system and the project, and nothing else** (D8, 2026-11-03). Inside
-   bwrap the harness sees `/bin`, `/sbin`, `/usr`, `/lib`, `/lib64`, `/proc`, `/dev`, its own
-   program if that lives elsewhere, the project, and the directories the profile lists. The
+   bwrap the harness sees `/bin`, `/sbin`, `/usr`, `/lib`, `/lib64`, `/proc`, `/dev`, the
+   resolver's files and the certificate store, its own program if that lives elsewhere, the
+   project, and the directories the profile lists. The
    root is remounted read-only, so a write anywhere else fails rather than landing in an empty
    directory, and `/tmp` and the home directory are not mounted at all. The sandbox's `/dev` is
    its own small writable device directory, never the host's. The rejected

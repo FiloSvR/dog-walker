@@ -107,8 +107,9 @@ pub fn launch(
     let mut child = loop {
         match command.spawn() {
             Ok(child) => break child,
-            // A harness that is being written at this moment (a fresh install, a test) is
-            // transiently busy; it is worth another try before the task is called failed.
+            // A harness that is being written at this moment is transiently busy; it is worth
+            // another try before the task is called failed. (A sandboxed run spawns bwrap, so
+            // this covers the unsandboxed path; bwrap reports the busy harness in its exit.)
             Err(source)
                 if source.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 5 =>
             {

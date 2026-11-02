@@ -431,7 +431,7 @@ fn at6_a_brief_from_stdin() {
     let mut child = binary()
         .arg("--config")
         .arg(&fixture.config)
-        .args(["run", "alpha", "-"])
+        .args(["run", "alpha", "-", "--unsandboxed"])
         .current_dir(&fixture.project)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -710,7 +710,7 @@ fn at16_a_harness_that_cannot_start_is_a_config_error() {
     let out = binary()
         .arg("--config")
         .arg(&config)
-        .args(["run", "alpha", "Do the thing."])
+        .args(["run", "alpha", "Do the thing.", "--unsandboxed"])
         .current_dir(&fixture.project)
         .output()
         .unwrap();
@@ -746,7 +746,9 @@ fn a_profile_without_a_command_is_a_usage_error() {
     assert!(!fixture.tasks().exists());
 }
 
-// AT24 (R19): a run needs no network: it works in a network-less namespace.
+// AT24 (R19): a run needs no network: it works in a network-less namespace. The inner run is
+// `--unsandboxed` because a sandbox cannot nest user namespaces; the outer bwrap is the
+// network-less sandbox here, and the point is that dog-walker itself needs no network.
 #[test]
 fn at24_a_run_works_without_network() {
     if !sandbox_available("at24_a_run_works_without_network") {
@@ -1100,7 +1102,7 @@ fn init_repo(project: &Path) {
     ]);
 }
 
-// AT19 (R7, R16): a write outside the project fails at OS level, whatever the harness says.
+// AT19 (R15, R16): a write outside the project fails at OS level, whatever the harness says.
 #[test]
 fn at19_a_write_outside_the_project_is_denied() {
     if !sandbox_available("at19_a_write_outside_the_project_is_denied") {
@@ -1179,6 +1181,15 @@ fn at26_git_is_read_only_by_default() {
     }
     let fixture = Fixture::new("at26", "git");
     init_repo(&fixture.project);
+    // A real remote just outside the project: the sandbox, not a missing repository, is what
+    // makes the push fail.
+    let remote = fixture.dir.path().join("outside.git");
+    let out = Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&remote)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
     let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
@@ -1199,6 +1210,13 @@ fn at26_git_can_be_writable() {
     }
     let fixture = Fixture::with_policy("at21-writable", "git", "git = \"writable\"");
     init_repo(&fixture.project);
+    let remote = fixture.dir.path().join("outside.git");
+    let out = Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&remote)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
     let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
@@ -1208,7 +1226,7 @@ fn at26_git_can_be_writable() {
     assert!(!handover.contains("push: 0"), "{handover}");
 }
 
-// AT22 (R20): extra directories and variables from the profile reach the harness, and the
+// AT25 (R20): extra directories and variables from the profile reach the harness, and the
 // handover lists them.
 #[test]
 fn at25_extra_dirs_and_variables_reach_the_harness() {
@@ -1245,6 +1263,7 @@ fn at25_extra_dirs_and_variables_reach_the_harness() {
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
     assert!(handover.contains("- tool: bwrap"), "{handover}");
+    assert!(handover.contains("- network: on"), "{handover}");
     assert!(handover.contains("env: hello"), "{handover}");
     assert!(handover.contains("write-read-only: denied"), "{handover}");
     assert!(handover.contains("write-unlisted: denied"), "{handover}");
@@ -1317,7 +1336,15 @@ fn at22_without_bwrap_the_opt_out_runs_and_records_it() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
-    assert!(handover.contains("- tool: none"), "{handover}");
+    assert!(
+        handover.contains("- tool: none (--unsandboxed)"),
+        "{handover}"
+    );
+    assert!(handover.contains("- network: not enforced"), "{handover}");
+    assert!(
+        handover.contains("- environment: inherited, not cleaned"),
+        "{handover}"
+    );
     assert!(handover.contains("ran without a sandbox"), "{handover}");
 }
 
@@ -1412,11 +1439,11 @@ fn no_process_runs(path: &Path) -> bool {
         let mut found = false;
         if let Ok(entries) = fs::read_dir("/proc") {
             for entry in entries.flatten() {
-                if let Ok(bytes) = fs::read(entry.path().join("cmdline")) {
-                    if String::from_utf8_lossy(&bytes).contains(&target) {
-                        found = true;
-                        break;
-                    }
+                if fs::read(entry.path().join("cmdline"))
+                    .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).contains(&target))
+                {
+                    found = true;
+                    break;
                 }
             }
         }

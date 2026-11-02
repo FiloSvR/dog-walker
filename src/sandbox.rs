@@ -27,11 +27,14 @@ const FORBIDDEN_ANY: [&str; 3] = ["/proc", "/sys", "/dev"];
 const FORBIDDEN_EXACT: [&str; 2] = ["/run", "/tmp"];
 
 /// The system files a networked harness needs: names, certificates and the loader's cache.
-const SYSTEM_FILES: [&str; 8] = [
+const SYSTEM_FILES: [&str; 10] = [
     "/etc/resolv.conf",
     "/etc/hosts",
     "/etc/nsswitch.conf",
-    "/etc/ssl",
+    // The certificate store, and not the rest of `/etc/ssl`: `private` may be there.
+    "/etc/ssl/certs",
+    "/etc/ssl/cert.pem",
+    "/etc/ssl/openssl.cnf",
     "/etc/ca-certificates",
     "/etc/ld.so.cache",
     "/etc/localtime",
@@ -133,9 +136,11 @@ impl Plan {
                 bwrap: None,
             });
         }
+        let policy = Policy::checked(profile)?;
+        above_the_project(&policy, project)?;
         Ok(Plan {
             sandboxed: true,
-            policy: Policy::checked(profile)?,
+            policy,
             bwrap: Some(resolve_bwrap(project)?),
         })
     }
@@ -301,6 +306,19 @@ impl Plan {
             }
         }
         Ok(pairs)
+    }
+}
+
+/// A read-only directory above the project would shadow the project bind and make the run
+/// unwritable; it is refused rather than failing the harness halfway.
+fn above_the_project(policy: &Policy, project: &Path) -> Result<(), SandboxError> {
+    match policy
+        .read_only_dirs
+        .iter()
+        .find(|dir| project.starts_with(dir))
+    {
+        Some(dir) => Err(SandboxError::AboveProject { path: dir.clone() }),
+        None => Ok(()),
     }
 }
 
@@ -490,6 +508,35 @@ mod tests {
         assert_eq!(command.get_program(), "/bin/echo");
         let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
         assert_eq!(args, ["the brief"]);
+    }
+
+    #[test]
+    fn a_program_that_does_not_resolve_is_caught_before_a_task() {
+        let mut profile = profile();
+        profile.command = Some(vec!["./no-such-program".to_owned()]);
+        let project = project("missing-program");
+        let plan = Plan::new(&profile, &project, true).unwrap();
+        assert!(plan.check(&profile, &project).is_err());
+        fs::remove_dir_all(&project).unwrap();
+    }
+
+    #[test]
+    fn a_read_only_directory_above_the_project_is_refused() {
+        let base =
+            std::env::temp_dir().join(format!("dog-walker-sandbox-{}-above", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let outer = base.join("outer");
+        let project = outer.join("project");
+        fs::create_dir_all(&project).unwrap();
+        let project = fs::canonicalize(&project).unwrap();
+        let outer = fs::canonicalize(&outer).unwrap();
+        let mut profile = profile();
+        profile.read_only_dirs = vec![outer];
+        assert!(matches!(
+            Plan::new(&profile, &project, false),
+            Err(SandboxError::AboveProject { .. })
+        ));
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
