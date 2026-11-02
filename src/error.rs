@@ -70,6 +70,8 @@ pub enum HandoverError {
 /// Why the harness could not be started or waited for.
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchError {
+    #[error(transparent)]
+    Task(#[from] TaskError),
     #[error("profile `{profile}` has no `command` to run")]
     NoCommand { profile: String },
     #[error("cannot open the log {}: {source}", path.display())]

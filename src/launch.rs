@@ -36,6 +36,8 @@ pub fn launch(
     project: &Path,
     prompt: &str,
 ) -> Result<ExitStatus, LaunchError> {
+    // The folder must still be the one that was created before anything is written in it.
+    task.verify()?;
     let argv = profile
         .command
         .as_ref()
