@@ -18,11 +18,13 @@ Read by `plan`, `change` and `review`.
   `check` and `test` stay on `pull_request`: they verify the pull request's code, so they have
   to run it, and a pull request that edits them is caught by the high-risk rule in
   `docs/agents/review.md`, not by the check (#23 decided this).
-  Rollout (#23): the `pull_request_target` workflow landed first as
-  `.github/workflows/review-guard-target.yml`, next to the old `pull_request` one, because the
-  ruleset requires the check by name and a pull request that replaced its own guard would not
-  report it at all; the old file was then deleted and the new one took its name. While both
-  were on `main`, a pull request ran the check twice.
+  Rollout (#23): two steps, because the ruleset requires the check by name and a pull request
+  that replaced its own guard would report nothing at all. The `pull_request_target` workflow
+  lands first as `.github/workflows/review-guard-target.yml`, next to the old `pull_request`
+  one; a second pull request deletes the old file and gives the new one its name. In between,
+  every pull request runs the check twice, and the old run still executes the pull request's
+  copy of the workflow, so the hardening is complete only when the second step lands: merge it
+  straight away, and merge nothing else in the window that the guard is meant to stop.
   Required CI contexts: `check`, `test` and `review-guard`, required by the repository
   ruleset on `main` (strict: a pull request must be up to date; no bypass actors). The ruleset
   is the owner's; agents do not change it.
