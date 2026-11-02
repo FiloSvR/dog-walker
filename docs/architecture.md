@@ -18,6 +18,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 | `handover` | TOML front matter, brief and Result; whole-file rewrite (R11, R12) | built (#16) |
 | `status` | The `Status` type and its transitions (R12) | built (#16) |
 | `launch` | Starting the harness, waiting, and ending its process group (R5, R14) | built (#16, #5) |
+| `sandbox` | The bwrap command, the profile's policy, and what the handover records (R15-R17, R20) | built (#4) |
 
 Invariants, each with the test that checks it:
 
@@ -34,8 +35,8 @@ Invariants, each with the test that checks it:
 `.dog-walker/tasks/<id>-<slug>/` holds, per task:
 
 - `handover.md`: owned by dog-walker. TOML front matter (id, profile, status), the brief,
-  then the Result section. Inside the sandbox (#4) it will be bound read-only; until then the
-  guarantee is the whole-file rewrite after the run, which drops an edit by the harness.
+  then the Result section. Bound read-only inside the sandbox (#4), so the harness cannot
+  change the status or the brief; the whole-file rewrite after the run is the second net.
 - `result.md`: the one file the harness is told to write.
 - `harness.log`: the harness's stdout and stderr, raw and untruncated.
 
@@ -77,6 +78,32 @@ harness that ends with a non-zero status is a failed task, even when it left a r
 (`at16_a_nonzero_exit_is_a_failure`), and the handover path is printed as soon as the handover
 exists, so a failure to write the end state still leaves it on stdout
 (`at7_the_path_comes_before_the_end_state`).
+
+## The sandbox
+
+Every run is sandboxed with bwrap (D2, R15) unless `--unsandboxed` says otherwise. Inside, the
+harness sees the system's programs and libraries (`/bin`, `/sbin`, `/usr`, `/lib`, `/lib64`),
+its own program when that lives elsewhere, `/proc`, `/dev`, the project (writable), and only
+what the profile lists (`read_only_dirs`, `writable_dirs`). `/tmp`, the home directory and the
+rest of the host are not mounted at all, and the root is remounted read-only, so a write
+outside the project fails instead of landing in an empty directory. `.git` is mounted
+read-only unless the profile says `git = "writable"` (D6); the network is there unless
+`network = false` cuts it (D3); the environment is cleared and rebuilt from the profile's `env`
+names plus `PATH`.
+
+The policy reaches the handover as a `## Sandbox` section: the tool, the network setting, the
+git mode, the directories and the variable names (R20). A denial is an `EACCES` or `EPERM` in
+`harness.log`, and the policy recorded next to it is what makes it traceable: bwrap does not
+say which rule fired, and dog-walker does not invent one.
+
+Without bwrap, `run` exits 2 and names `--unsandboxed`; with the flag, the run is unsandboxed
+and the handover says `tool: none` (R17). A missing harness program is a config error caught
+before a task starts, sandboxed or not.
+
+Checks: `at19_a_write_outside_the_project_is_denied`,
+`at20_the_network_is_unreachable_when_off`, `at21_git_is_read_only_by_default`,
+`at21_git_can_be_writable`, `at22_extra_dirs_and_variables_reach_the_harness`, `at23_*`, and
+the unit tests in `src/sandbox.rs`.
 
 ## Stopping a task
 

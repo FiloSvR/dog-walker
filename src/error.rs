@@ -76,6 +76,8 @@ pub enum LaunchError {
     Deadline { timeout: std::time::Duration },
     #[error(transparent)]
     Task(#[from] TaskError),
+    #[error(transparent)]
+    Sandbox(#[from] SandboxError),
     #[error("profile `{profile}` has no `command` to run")]
     NoCommand { profile: String },
     #[error("cannot open the log {}: {source}", path.display())]
@@ -90,6 +92,23 @@ pub enum LaunchError {
 }
 
 /// Why the command line could not produce a task.
+/// Why the sandbox could not be set up.
+#[derive(Debug, thiserror::Error)]
+pub enum SandboxError {
+    #[error(
+        "bwrap is not installed: install bubblewrap, or pass --unsandboxed to run without a sandbox"
+    )]
+    NoTool,
+    #[error("profile `{profile}` has no `command` to sandbox")]
+    NoCommand { profile: String },
+    #[error("cannot resolve the harness `{program}`: {source}")]
+    Program { program: String, source: io::Error },
+    #[error("cannot mount {}: {source}", path.display())]
+    Dir { path: PathBuf, source: io::Error },
+    #[error("`{name}` is listed in the profile's `env` and is not set")]
+    MissingEnv { name: String },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error("the task is empty: pass the brief as text, with --file, or `-` for stdin")]
@@ -121,6 +140,8 @@ pub enum Error {
     Status(#[from] StatusError),
     #[error(transparent)]
     Task(#[from] TaskError),
+    #[error(transparent)]
+    Sandbox(#[from] SandboxError),
     #[error(transparent)]
     Handover(#[from] HandoverError),
     #[error(transparent)]

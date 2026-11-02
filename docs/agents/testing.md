@@ -15,12 +15,14 @@ a stub `gh` and the real `jq`.
 
 The fake harness is a small script that a test writes and a profile's `command` points at:
 its first argument is the behaviour (write a result, write a malformed one, do nothing, hang —
-it writes its pid and its child's into `pids` — edit the handover) and the brief arrives as its
-last argument, so `tests/run.rs` exercises the
+it writes its pid and its child's into `pids` — edit the handover, try a write outside the
+project, a connection, git, or reading and writing listed directories) and the brief arrives
+as its last argument, so `tests/run.rs` exercises the
 same launcher a user configures. It is not part of the binary, and there are no test-only
 variants in it.
 
-Sandbox tests use the real `bwrap`, since
+The sandbox tests (`at19`-`at23`) use the real `bwrap` too, and are skipped the same way; CI
+installs `bubblewrap`. Sandbox tests use the real `bwrap`, since
 they check OS-level effects; they are skipped with a loud message when `bwrap`
 or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to any
 non-empty value, `0` included (CI sets `1`), in which case a missing sandbox fails them. Every sandbox

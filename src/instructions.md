@@ -22,6 +22,11 @@ State, in plain words, what the secondary needs and nothing else:
 ends. It prints the path of the handover on stdout and logs on stderr. Running the main
 profile itself needs `--allow-main`.
 
+The task runs in a sandbox: it sees the project, the system's programs, and only the
+directories and variables its profile lists. A profile can cut the network
+(`network = false`) and make `.git` writable (`git = "writable"`). If bwrap is missing, `run`
+refuses; `--unsandboxed` runs without it and the handover says so.
+
 A task is stopped when its profile's `timeout_minutes` passes (30 minutes by default; it
 takes a fraction of a minute, so `0.5` is 30 seconds, up to 525600 for a year), or sooner with
 `dog-walker cancel <id>` from another shell in the project directory. Either way the harness
