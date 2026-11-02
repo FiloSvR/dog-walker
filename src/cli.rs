@@ -195,9 +195,10 @@ fn run_task(
         }
         .into());
     }
-    // A Ctrl-C from here on is a cancel that closes the handover, not a dead runner.
-    launch::watch_for_interrupts()?;
     let brief = brief(task, file)?;
+    // From here on a Ctrl-C is a cancel that closes the handover, not a dead runner; before a
+    // task exists, the default disposition is the right one.
+    launch::watch_for_interrupts()?;
     let project = std::env::current_dir().map_err(|source| CliError::Project { source })?;
     let task = Task::create(&project, &brief)?;
     let handover_path = task.handover_path();
@@ -291,10 +292,17 @@ fn cancel(id: &str, stdout: &mut dyn Write) -> Result<u8, Error> {
     }
     // The runner may have closed the task between the read and the marker: take the request
     // back rather than leave a marker in a finished task.
-    if let Some(status) = finished_status(&task)? {
-        let _ = fs::remove_file(&marker);
-        output::line(stdout, &format!("dog-walker: task {id} already {status}"))?;
-        return Ok(exit::SUCCESS);
+    match finished_status(&task) {
+        Ok(None) => {}
+        Ok(Some(status)) => {
+            let _ = fs::remove_file(&marker);
+            output::line(stdout, &format!("dog-walker: task {id} already {status}"))?;
+            return Ok(exit::SUCCESS);
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&marker);
+            return Err(error.into());
+        }
     }
     output::line(
         stdout,
@@ -454,6 +462,24 @@ mod tests {
             exit_code(["dog-walker", "instructions"], &mut Full, &mut io::sink()),
             exit::ERROR
         );
+    }
+
+    #[test]
+    fn durations_read_as_seconds_or_minutes() {
+        for (timeout, text) in [
+            (Duration::from_secs(1), "1 second"),
+            (Duration::from_secs(60), "1 minute"),
+            (Duration::from_secs(90), "90 seconds"),
+            (Duration::from_mins(30), "30 minutes"),
+            (Duration::from_millis(1800), "1.8 seconds"),
+        ] {
+            assert_eq!(duration_text(timeout), text, "{timeout:?}");
+        }
+    }
+
+    #[test]
+    fn the_default_timeout_is_half_an_hour() {
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_mins(30));
     }
 
     #[test]

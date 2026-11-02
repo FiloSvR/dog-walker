@@ -324,6 +324,28 @@ mod tests {
     }
 
     #[test]
+    fn the_timeout_is_bounded_and_named() {
+        let too_large =
+            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=1e300\n")
+                .unwrap_err();
+        assert!(
+            too_large.to_string().contains("timeout_minutes"),
+            "{too_large}"
+        );
+        let over_a_year =
+            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=525601\n")
+                .unwrap_err();
+        assert!(over_a_year.to_string().contains("at most"), "{over_a_year}");
+        let a_year =
+            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=525600\n")
+                .unwrap();
+        assert_eq!(
+            a_year.profiles()[0].timeout,
+            Some(Duration::from_hours(365 * 24))
+        );
+    }
+
+    #[test]
     fn a_timeout_may_have_a_fraction_of_a_minute() {
         let config =
             parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=0.5\n")

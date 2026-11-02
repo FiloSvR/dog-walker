@@ -94,6 +94,8 @@ Followed by `change`, checked by `review`:
   nothing is left as a zombie.
 - **Time and randomness** are injected, so tests are deterministic. The timeout and cancel
   tests are the exception: the deadline is the thing under test, so they use the real clock
-  with short deadlines (seconds) instead of a manual one.
+  with short deadlines (seconds) instead of a manual one. The launch tests also install the
+  Ctrl-C and TERM handlers in the test process, so `cargo test --lib` ignores Ctrl-C once they
+  have run.
 - **Visibility.** `pub(crate)` by default; `pub` only where the binary or an integration test needs it.
 - **Comments** explain why, not what. A `TODO` carries an issue number.

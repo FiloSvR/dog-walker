@@ -5,8 +5,8 @@
 //! reach it in the environment, so an adapter's command line and an argv list a user writes
 //! both work without anything being spliced into a shell string.
 //!
-//! The harness leads a process group of its own, so a timeout or a cancel ends everything it
-//! started, not only the process dog-walker spawned.
+//! The harness leads a process group of its own, so a timeout or a cancel ends the processes in
+//! that group, not only the process dog-walker spawned.
 
 use std::fs::File;
 use std::os::unix::process::CommandExt;
@@ -141,6 +141,7 @@ fn wait(child: &mut Child, cancel: &Path, timeout: Duration) -> Result<End, Laun
                 return Err(wait_error(source));
             }
         }
+        // A runner that cannot confirm the tree ended reports a failed task, not a clean stop.
         if cancel.exists() || interrupted() {
             end(child)?;
             return Ok(End::Cancelled);
@@ -153,7 +154,7 @@ fn wait(child: &mut Child, cancel: &Path, timeout: Duration) -> Result<End, Laun
     }
 }
 
-/// Ends the harness's whole process group: TERM first, KILL when it does not go.
+/// Ends the harness's process group: TERM first, then KILL whatever is left.
 ///
 /// The leader is reaped by the polling, so the last KILL can race a reused process-group id in
 /// a window of microseconds; the alternative, sleeping the whole grace before the KILL, would
@@ -184,8 +185,25 @@ fn end(child: &mut Child) -> Result<(), LaunchError> {
     }
     // Whatever is left of the group goes now, including children that outlived the leader.
     let _ = kill_process_group(group, Signal::KILL);
-    if let Err(source) = child.wait() {
-        failure.get_or_insert(source);
+    // `wait` blocks forever on a leader in uninterruptible sleep; poll instead, and report when
+    // the tree cannot be confirmed gone.
+    let deadline = Instant::now() + GRACE;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(source) => {
+                failure.get_or_insert(source);
+                break;
+            }
+        }
+        if Instant::now() >= deadline {
+            failure.get_or_insert(std::io::Error::other(
+                "the harness did not end after a KILL",
+            ));
+            break;
+        }
+        thread::sleep(POLL);
     }
     match failure {
         Some(source) => Err(wait_error(source)),
@@ -204,8 +222,13 @@ fn install() -> Result<(), LaunchError> {
         return Ok(());
     }
     let flag = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(SIGINT, Arc::clone(&flag)).map_err(wait_error)?;
-    signal_hook::flag::register(SIGTERM, Arc::clone(&flag)).map_err(wait_error)?;
+    let signal = |source| LaunchError::Signal { source };
+    let interrupt = signal_hook::flag::register(SIGINT, Arc::clone(&flag)).map_err(signal)?;
+    if let Err(source) = signal_hook::flag::register(SIGTERM, Arc::clone(&flag)) {
+        // Do not leave SIGINT replaced by a handler nobody reads.
+        signal_hook::low_level::unregister(interrupt);
+        return Err(signal(source));
+    }
     let _ = INTERRUPTED.set(flag);
     Ok(())
 }

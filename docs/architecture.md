@@ -82,7 +82,8 @@ exists, so a failure to write the end state still leaves it on stdout
 
 The harness leads a process group of its own, so a stop takes the processes in that group. `run`
 waits by polling the child and ends the tree when the profile's timeout passes (30 minutes by
-default; `timeout_minutes` takes a fraction of a minute), when Ctrl-C or a TERM interrupts the
+default; `timeout_minutes` takes a fraction of a minute, at most a year), when Ctrl-C or a TERM
+interrupts the
 runner, or when `cancel <id>` writes `.cancel` into the task folder. The group gets TERM, the
 runner waits for the leader up to two seconds, then the group gets KILL. The handover is closed
 as `timed-out` or `cancelled`, and the runner removes the marker once the end state is on disk.
@@ -92,7 +93,8 @@ that has already ended.
 Checks: `at17_a_timeout_kills_the_tree_and_ends_timed_out`,
 `at18_ctrl_c_kills_the_tree_and_ends_cancelled`,
 `at18_cancel_from_another_shell_kills_the_tree`,
-`at18_cancelling_a_finished_task_changes_nothing`, and the unit tests
+`at18_cancelling_a_finished_task_changes_nothing`, `at18_a_term_to_the_runner_cancels`,
+`cancel_refuses_a_symlinked_tasks_root`, and the unit tests
 `a_timeout_ends_the_whole_tree` and `a_cancel_marker_ends_the_whole_tree` in `src/launch.rs`.
 
 ## Packaging
