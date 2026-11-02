@@ -9,6 +9,10 @@ Read by `change`, `architect` and `plan`.
 | `#[cfg(test)]` modules in `src/` | unit | pure logic: config parsing, status transitions, handover rendering |
 | `tests/` | acceptance | the compiled binary run against a fake harness; one test per AT in `docs/requirements.md` |
 
+`tests/review_guard.rs` is another exception, like `tests/architecture.rs`: it runs the
+`review-guard` step, which lives inline in `.github/workflows/review-guard-target.yml`, against
+a stub `gh` and the real `jq`.
+
 The fake harness is a small test-only binary with scripted behaviours (write a
 result, write a malformed one, hang, read its environment, attempt a forbidden
 write, try the network, call `run`). Sandbox tests use the real `bwrap`, since
@@ -17,15 +21,16 @@ or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to an
 non-empty value, `0` included (CI sets `1`), in which case a missing sandbox fails them. Every sandbox
 test starts with the `sandbox_available` helper in `tests/cli.rs`; today that is
 `at24_works_without_network`. A skipped test still reports `ok`; its SKIPPED line is printed to stderr, which cargo
-shows even for a passing test. Everything runs offline. The AT id is in the
-test name, and a failing test prints the fake harness's output.
+shows even for a passing test. Everything runs offline. Only the acceptance tests
+carry an AT id in the name, and a failing test prints the fake harness's output.
 
 ## Commands
 
 - One test file or folder: `cargo test --test <name>`, or `cargo test <filter>`. Never the whole suite; CI is the gate.
 - Check (format, lint, dependency rules): `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo deny check`.
 - Format fix: `cargo fmt`.
-- Tools: `cargo install --locked cargo-deny`. Building any crate needs a C linker (`gcc`).
+- Tools: `cargo install --locked cargo-deny`, and `jq` for `tests/review_guard.rs`.
+  Building any crate needs a C linker (`gcc`).
 
 ## CI
 
