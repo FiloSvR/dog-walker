@@ -74,7 +74,7 @@ impl Policy {
     }
 
     /// The policy as written, for a run that does not apply it.
-    fn as_written(profile: &Profile) -> Policy {
+    pub fn as_written(profile: &Profile) -> Policy {
         Policy {
             network: profile.network,
             git_writable: profile.git_writable,
@@ -147,6 +147,24 @@ impl Request {
             field,
             detail,
         };
+        if let Some(dir) = self
+            .read_only_dirs
+            .iter()
+            .chain(self.writable_dirs.iter())
+            .flatten()
+            .find(|dir| !is_printable(dir))
+        {
+            return Err(loosens(
+                "read_only_dirs",
+                format!("`{}` cannot be shown", dir.display()),
+            ));
+        }
+        if let Some(value) = self.git.as_deref().filter(|value| !printable(value)) {
+            return Err(OverrideError::Git {
+                origin: origin.to_owned(),
+                value: format!("{value:?}"),
+            });
+        }
         let network = self.network.unwrap_or(parent.network);
         if network && !parent.network {
             return Err(loosens(
@@ -171,6 +189,31 @@ impl Request {
                 "the policy it inherits keeps `.git` read-only".to_owned(),
             ));
         }
+        let (read_only_dirs, writable_dirs) = self.dirs(parent, project, origin)?;
+        let env = self.env.clone().unwrap_or_else(|| parent.env.clone());
+        if let Some(name) = env.iter().find(|name| !parent.env.contains(name)) {
+            return Err(loosens(
+                "env",
+                format!("`{name}` is not one the policy it inherits lists"),
+            ));
+        }
+        Ok(Policy {
+            network,
+            git_writable,
+            read_only_dirs,
+            writable_dirs,
+            env,
+        })
+    }
+
+    /// The effective directory lists, or the field they would loosen. A directory is judged
+    /// by what its mount does: winning write access is a loosening, losing read access is not.
+    fn dirs(
+        &self,
+        parent: &Policy,
+        project: &Path,
+        origin: &str,
+    ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), OverrideError> {
         let read_only_dirs = match &self.read_only_dirs {
             Some(dirs) => dirs.iter().map(|dir| resolve_dir(dir)).collect(),
             None => parent.read_only_dirs.clone(),
@@ -178,6 +221,11 @@ impl Request {
         let writable_dirs = match &self.writable_dirs {
             Some(dirs) => dirs.iter().map(|dir| resolve_dir(dir)).collect(),
             None => parent.writable_dirs.clone(),
+        };
+        let loosens = |field: &'static str, detail: String| OverrideError::Loosens {
+            origin: origin.to_owned(),
+            field,
+            detail,
         };
         // A directory can only be added to a writable list as a loosening.
         if let Some(dir) = writable_dirs
@@ -193,12 +241,16 @@ impl Request {
             ));
         }
         // A read-only directory may be added only where it takes write access away: inside
-        // the project or a writable directory. Anywhere else it is more to read.
+        // the project, a writable directory, or one the policy already keeps read-only.
         if let Some(dir) = read_only_dirs.iter().find(|dir| {
             let covered = dir.starts_with(project)
                 || writable_dirs
                     .iter()
-                    .any(|writable| dir.starts_with(writable));
+                    .any(|writable| dir.starts_with(writable))
+                || parent
+                    .read_only_dirs
+                    .iter()
+                    .any(|inherited| dir.starts_with(inherited));
             !parent.read_only_dirs.contains(dir) && !covered
         }) {
             return Err(loosens(
@@ -226,21 +278,22 @@ impl Request {
                 ),
             ));
         }
-        let env = self.env.clone().unwrap_or_else(|| parent.env.clone());
-        if let Some(name) = env.iter().find(|name| !parent.env.contains(name)) {
-            return Err(loosens(
-                "env",
-                format!("`{name}` is not one the policy it inherits lists"),
-            ));
-        }
-        Ok(Policy {
-            network,
-            git_writable,
-            read_only_dirs,
-            writable_dirs,
-            env,
-        })
+        Ok((read_only_dirs, writable_dirs))
     }
+}
+
+/// Whether a path can be shown: no control characters, no Unicode line separators and no
+/// bidirectional controls that would reorder an error message.
+fn is_printable(path: &Path) -> bool {
+    !path
+        .to_string_lossy()
+        .chars()
+        .any(crate::config::is_unsafe_char)
+}
+
+/// The same for a plain string.
+fn printable(text: &str) -> bool {
+    text.chars().all(|c| !crate::config::is_unsafe_char(c))
 }
 
 /// A directory in a request, canonical when it exists: the policy it is compared with holds
@@ -283,7 +336,6 @@ impl Plan {
         project: &Path,
         unsandboxed: bool,
     ) -> Result<Plan, SandboxError> {
-        above_the_project(&policy, project)?;
         if unsandboxed {
             return Ok(Plan {
                 sandboxed: false,
@@ -291,6 +343,7 @@ impl Plan {
                 bwrap: None,
             });
         }
+        above_the_project(&policy, project)?;
         Ok(Plan {
             sandboxed: true,
             policy,

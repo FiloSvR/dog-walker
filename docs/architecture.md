@@ -124,8 +124,9 @@ follow what the mount would do: a read-only directory can be added inside the pr
 writable directory (it takes write access away) but not elsewhere (it would be more to read),
 and one that protects the project or a writable directory cannot be dropped. Anything else is
 rejected, naming the field and who asked. The project file must be a regular file inside the
-project: a symlink out of it is refused, not read. The effective policy is what the handover
-records, and `Plan::from_policy` builds the sandbox from it.
+project: a symlink out of it is refused, not read. The effective policy is what the sandbox is built from
+(`Plan::from_policy`) and what the handover records; with `--unsandboxed` the record says the
+policy is not enforced, because it is not.
 
 Checks: `at4_a_project_config_can_tighten`, `at4_a_project_config_that_loosens_is_named`,
 `at4_a_project_config_cannot_add_a_directory`, `at4_a_malformed_project_config_is_named`,

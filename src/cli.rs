@@ -230,7 +230,12 @@ fn run_task(
         fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
             .map_err(|source| CliError::Project { source })?;
     // The profile is the policy; the project config and the task may only tighten it (R3).
-    let policy = Policy::checked(profile)?;
+    // Without the sandbox there is nothing to mount, so the directories are only shown.
+    let policy = if unsandboxed {
+        Policy::as_written(profile)
+    } else {
+        Policy::checked(profile)?
+    };
     let policy = match config::project_config(&project)? {
         Some(project_config) => {
             let origin = format!("the project config {}", project_config.path().display());

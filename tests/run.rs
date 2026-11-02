@@ -1560,6 +1560,35 @@ fn at4_a_symlinked_project_config_is_refused() {
     assert!(!fixture.tasks().exists());
 }
 
+// AT4 (R3): a project config with a key that is not a policy field is refused.
+#[test]
+fn at4_an_unknown_project_key_is_refused() {
+    let fixture = Fixture::new("at4-unknown", "result");
+    project_config(&fixture, "netwrok = false\n");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("config.toml"), "{}", stderr(&out));
+    assert!(!fixture.tasks().exists());
+}
+
+// AT4 (R3): without the sandbox the directories are only recorded, so a profile whose
+// directories are not on this host still runs.
+#[test]
+fn at4_unsandboxed_does_not_mount_the_profile_directories() {
+    let fixture = Fixture::new("at4-unsandboxed", "result");
+    add_policy(
+        &fixture,
+        "read_only_dirs = [\"/nonexistent/dog-walker-dir\"]",
+    );
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        fixture.handover().contains("- directories: not enforced"),
+        "{}",
+        fixture.handover()
+    );
+}
+
 // AT4 (R3): a project config with a bad `git` value names the file.
 #[test]
 fn at4_a_bad_git_mode_names_the_project_config() {
