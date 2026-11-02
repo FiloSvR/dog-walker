@@ -48,12 +48,17 @@ where
         Err(error) => {
             // Help and version go to stdout with code 0; usage errors to stderr with code 2.
             let text = error.render().to_string();
-            if error.use_stderr() {
-                let _ = stderr.write_all(text.as_bytes());
-                return ExitCode::from(exit::ERROR);
-            }
-            let _ = stdout.write_all(text.as_bytes());
-            return ExitCode::from(exit::SUCCESS);
+            let (target, code): (&mut dyn Write, u8) = if error.use_stderr() {
+                (stderr, exit::ERROR)
+            } else {
+                (stdout, exit::SUCCESS)
+            };
+            let code = if output::text(target, &text).is_ok() {
+                code
+            } else {
+                exit::ERROR
+            };
+            return ExitCode::from(code);
         }
     };
     match execute(&cli, stdout) {

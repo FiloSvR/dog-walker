@@ -36,6 +36,10 @@ dbg_macro = "deny"
 indexing_slicing = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
+# Loosened pedantic lints, each with its reason (docs/agents/review.md):
+# - module_name_repetitions: `ConfigError` in `error` and `ProfileName` in `config` read better in full.
+# - missing_errors_doc: errors are one enum per module, documented on the enum, not on every function.
+# - must_use_candidate: flags every small getter; unused results are caught by `unused_must_use`.
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 must_use_candidate = "allow"

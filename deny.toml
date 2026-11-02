@@ -24,6 +24,12 @@ deny = [
     { name = "rustls" },
     { name = "socket2" },
     { name = "mio" },
+    { name = "native-tls" },
+    { name = "h2" },
+    { name = "curl" },
+    { name = "attohttpc" },
+    { name = "async-io" },
+    { name = "smol" },
 ]
 
 [sources]

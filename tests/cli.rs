@@ -1,9 +1,10 @@
 //! Acceptance tests for the scaffold (#3): config validation, `profiles`, `instructions`.
 //! They run the compiled binary and look only at its exit code and output.
 
-// Why: clippy.toml exempts `#[test]` functions from the unwrap and expect denials, but not
-// the helper functions of an integration-test file. A failing helper should fail the test.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+// Why: clippy.toml exempts `#[test]` functions from the unwrap denial, but not the helper
+// functions of an integration-test file. A failing helper should fail the test. `expect` is
+// not allowed here: nothing in this file needs it.
+#![allow(clippy::unwrap_used)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -214,25 +215,134 @@ fn at24_works_without_network() {
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
 }
 
-// AT24 (R19): no networking or async-runtime crate is in the dependency tree.
+// AT24 (R19): none of the crates `deny.toml` bans is in the dependency tree. The ban list
+// lives only in `deny.toml`; this reads it, so the two cannot drift apart.
 #[test]
 fn at24_no_networking_crates_in_lockfile() {
-    let lock = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock")).unwrap();
-    for banned in [
-        "tokio",
-        "async-std",
-        "reqwest",
-        "hyper",
-        "ureq",
-        "openssl",
-        "rustls",
-        "socket2",
-        "mio",
-    ] {
-        let needle = format!("name = \"{banned}\"");
+    let root = env!("CARGO_MANIFEST_DIR");
+    let lock = fs::read_to_string(format!("{root}/Cargo.lock")).unwrap();
+    let deny: toml::Table =
+        toml::from_str(&fs::read_to_string(format!("{root}/deny.toml")).unwrap()).unwrap();
+    let banned = deny["bans"]["deny"].as_array().unwrap();
+    assert!(banned.len() >= 9, "deny.toml lost its ban list");
+    for entry in banned {
+        let name = entry["name"].as_str().unwrap();
         assert!(
-            !lock.contains(&needle),
-            "banned crate in Cargo.lock: {banned}"
+            !lock.contains(&format!("name = \"{name}\"")),
+            "banned crate in Cargo.lock: {name}"
         );
     }
+}
+
+// AT2 (R1): a top-level key that is not `profiles` is rejected, not ignored.
+#[test]
+fn at2_top_level_unknown_key_is_rejected() {
+    let out = run_with_config("at2-top", &format!("foo = 1\n{VALID}"), &["profiles"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("foo"));
+}
+
+// AT2 (R1): a misspelled `profiles` table is rejected, not read as "no profiles".
+#[test]
+fn at2_misspelled_profiles_table_is_rejected() {
+    let config = "[profile.zeta]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n";
+    let out = run_with_config("at2-table", config, &["profiles"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("profile"));
+}
+
+/// A one-profile config whose profile has `extra` lines appended.
+fn one_profile(extra: &str) -> String {
+    format!("[profiles.zeta]\nharness = \"claude\"\nmain = true\n{extra}\n")
+}
+
+// AT2 (R1): blank text fields and an empty command program are rejected, each by name.
+#[test]
+fn at2_blank_values_are_rejected() {
+    for (case, extra, field) in [
+        ("blank-model", "model = \"  \"", "model"),
+        ("blank-effort", "model = \"m\"\neffort = \"  \"", "effort"),
+        (
+            "empty-program",
+            "model = \"m\"\ncommand = [\"\"]",
+            "command",
+        ),
+    ] {
+        let out = run_with_config(case, &one_profile(extra), &["profiles"]);
+        assert_eq!(out.status.code(), Some(2), "{case}: {}", stderr(&out));
+        let err = stderr(&out);
+        assert!(err.contains("zeta") && err.contains(field), "{case}: {err}");
+    }
+}
+
+// AT2 (R1): control characters in `model` and `effort` are rejected, so a row of
+// `profiles` can always be split; `-` is reserved for "no effort".
+#[test]
+fn at2_unprintable_or_reserved_values_are_rejected() {
+    for (case, extra, field) in [
+        ("tab-in-model", "model = \"a\\tb\"", "model"),
+        ("newline-in-model", "model = \"a\\nb\"", "model"),
+        (
+            "tab-in-effort",
+            "model = \"m\"\neffort = \"x\\ty\"",
+            "effort",
+        ),
+        ("dash-effort", "model = \"m\"\neffort = \"-\"", "effort"),
+    ] {
+        let out = run_with_config(case, &one_profile(extra), &["profiles"]);
+        assert_eq!(out.status.code(), Some(2), "{case}: {}", stderr(&out));
+        assert!(stderr(&out).contains(field), "{case}: {}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "{case}");
+    }
+}
+
+// R2: `profiles` prints one row per profile: name, harness, model, effort (`-` if none),
+// role, separated by tabs.
+#[test]
+fn profiles_rows_have_fixed_columns() {
+    let config = "[profiles.alpha]\nharness = \"pi\"\nmodel = \"local/qwen\"\n\n\
+                  [profiles.zeta]\nharness = \"claude\"\nmodel = \"m\"\neffort = \"high\"\nmain = true\n";
+    let out = run_with_config("rows", config, &["profiles"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "zeta\tclaude\tm\thigh\tmain\nalpha\tpi\tlocal/qwen\t-\tsecondary\n"
+    );
+}
+
+// R6: usage errors exit 2 with the text on stderr and nothing on stdout.
+#[test]
+fn usage_errors_exit_2_on_stderr() {
+    for args in [&["frobnicate"][..], &[][..], &["profiles", "--nope"][..]] {
+        let out = binary().args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(stdout(&out).is_empty(), "{args:?}: {}", stdout(&out));
+        assert!(!stderr(&out).is_empty(), "{args:?}");
+    }
+}
+
+// R6: help and version go to stdout, exit 0, nothing on stderr.
+#[test]
+fn help_and_version_go_to_stdout() {
+    for (arg, expect) in [("--help", "instructions"), ("--version", "dog-walker")] {
+        let out = binary().arg(arg).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{arg}");
+        assert!(stdout(&out).contains(expect), "{arg}: {}", stdout(&out));
+        assert!(stderr(&out).is_empty(), "{arg}: {}", stderr(&out));
+    }
+}
+
+// R1: `--config` is accepted after the subcommand as well as before it.
+#[test]
+fn config_flag_works_after_the_subcommand() {
+    let dir = TempDir::new("flag-after");
+    let file = dir.path().join("config.toml");
+    fs::write(&file, VALID).unwrap();
+    let out = binary()
+        .arg("profiles")
+        .arg("--config")
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
 }

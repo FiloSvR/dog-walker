@@ -178,15 +178,14 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
     let model = raw
         .model
         .ok_or_else(|| fail("missing required field `model`".to_owned()))?;
-    if model.trim().is_empty() {
-        return Err(fail("`model` must not be empty".to_owned()));
-    }
-    if raw
-        .effort
-        .as_deref()
-        .is_some_and(|effort| effort.trim().is_empty())
-    {
-        return Err(fail("`effort` must not be empty".to_owned()));
+    check_text("model", &model).map_err(fail)?;
+    if let Some(effort) = &raw.effort {
+        check_text("effort", effort).map_err(fail)?;
+        if effort == "-" {
+            return Err(fail(
+                "`effort` cannot be `-`: `profiles` prints that for no effort".to_owned(),
+            ));
+        }
     }
     if raw.timeout_minutes == Some(0) {
         return Err(fail("`timeout_minutes` must be greater than 0".to_owned()));
@@ -207,6 +206,17 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         command: raw.command,
         main: raw.main,
     })
+}
+
+/// A text field must hold something printable, so a row of `profiles` can always be split.
+fn check_text(field: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("`{field}` must not be empty"));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!("`{field}` must not contain control characters"));
+    }
+    Ok(())
 }
 
 /// Where the config file is when `--config` is not given: `$XDG_CONFIG_HOME` if it is an

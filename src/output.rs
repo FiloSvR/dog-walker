@@ -17,3 +17,8 @@ pub mod exit {
 pub fn line(writer: &mut dyn Write, text: &str) -> io::Result<()> {
     writeln!(writer, "{text}")
 }
+
+/// Writes `text` as it is, with no added newline (clap's help and usage text).
+pub fn text(writer: &mut dyn Write, text: &str) -> io::Result<()> {
+    writer.write_all(text.as_bytes())
+}

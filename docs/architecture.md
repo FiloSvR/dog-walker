@@ -22,8 +22,9 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 Invariants, each with the test that checks it:
 
 - A config has exactly one main profile and only known keys and harnesses: `at3_*` and `at2_*` in `tests/cli.rs`.
-- Nothing but `output` prints, and stdout carries results only: the print lints in `Cargo.toml`, and `at2_missing_model_names_profile_and_field`.
-- No networking or async-runtime crate is a dependency (R19): `deny.toml` bans them, and `at24_no_networking_crates_in_lockfile`.
+- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (it sees `write!` and `write_all`, which the lints do not), and `at2_missing_model_names_profile_and_field`.
+- A row of `profiles` can always be split: `model` and `effort` hold no control characters, and `-` means no effort: `at2_unprintable_or_reserved_values_are_rejected`, `profiles_rows_have_fixed_columns`.
+- No networking or async-runtime crate is a dependency (R19): `deny.toml` bans them (the one list), and `at24_no_networking_crates_in_lockfile` reads that list.
 
 ## Task folder
 
