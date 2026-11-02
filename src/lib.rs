@@ -8,3 +8,8 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod output;
+
+/// Probe.
+pub fn probe(values: &[u8]) -> u8 {
+    values[0]
+}
