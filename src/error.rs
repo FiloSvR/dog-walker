@@ -91,7 +91,6 @@ pub enum LaunchError {
     Wait { source: io::Error },
 }
 
-/// Why the command line could not produce a task.
 /// Why the sandbox could not be set up.
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxError {
@@ -107,6 +106,18 @@ pub enum SandboxError {
     Dir { path: PathBuf, source: io::Error },
     #[error("`{name}` is listed in the profile's `env` and is not set")]
     MissingEnv { name: String },
+    #[error("bwrap cannot create a sandbox here: {reason}; pass --unsandboxed to run without one")]
+    NoSandbox { reason: String },
+    #[error("the directory {} is not a directory", path.display())]
+    NotDir { path: PathBuf },
+    #[error("a profile cannot list `/` itself; list the directories it needs")]
+    RootDir,
+    #[error("a profile cannot mount the system directory {}", path.display())]
+    SystemDir { path: PathBuf },
+    #[error("the directory {} is listed as both read-only and writable", path.display())]
+    Overlap { path: PathBuf },
+    #[error("bwrap inside the project cannot be trusted: {}", path.display())]
+    BwrapInsideProject { path: PathBuf },
 }
 
 #[derive(Debug, thiserror::Error)]

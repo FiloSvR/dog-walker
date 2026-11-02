@@ -172,6 +172,8 @@ fn list(config: &Config, stdout: &mut dyn Write) -> io::Result<()> {
 
 /// Creates the task, runs the harness, finalizes the handover and prints its path. The exit
 /// code is 0 only when the task ended `done`.
+// Why: the runner threads the command line, the flag and both streams through; a struct would
+// only move the same fields one indirection further.
 #[allow(clippy::too_many_arguments)]
 fn run_task(
     cli: &Cli,
@@ -210,9 +212,9 @@ fn run_task(
     let project =
         fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
             .map_err(|source| CliError::Project { source })?;
-    let plan = Plan::new(profile, unsandboxed)?;
+    let plan = Plan::new(profile, &project, unsandboxed)?;
     // A sandbox that cannot be set up is a config error, not a failed task.
-    plan.check(profile)?;
+    plan.check(profile, &project)?;
     let task = Task::create(&project, &brief)?;
     let handover_path = task.handover_path();
     let mut handover = Handover::new(&task.id(), &profile.name, &brief)

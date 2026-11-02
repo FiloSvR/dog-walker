@@ -57,7 +57,8 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    bwrap the harness sees `/bin`, `/sbin`, `/usr`, `/lib`, `/lib64`, `/proc`, `/dev`, its own
    program if that lives elsewhere, the project, and the directories the profile lists. The
    root is remounted read-only, so a write anywhere else fails rather than landing in an empty
-   directory, and `/tmp` and the home directory are not mounted at all. The rejected
+   directory, and `/tmp` and the home directory are not mounted at all. The sandbox's `/dev` is
+   its own small writable device directory, never the host's. The rejected
    alternative, `--ro-bind / /` with the project writable, leaves the whole host readable,
    while R16 says read and write only inside the project, and hides nothing, which is D2's
    point. The cost is that a harness needing configuration in `$HOME` or scratch in `/tmp`

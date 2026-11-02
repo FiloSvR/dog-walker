@@ -293,6 +293,9 @@ fn sandbox_fields(raw: &RawProfile) -> Result<SandboxFields, String> {
     let dirs = |field: &str, given: &Option<Vec<String>>| -> Result<Vec<PathBuf>, String> {
         let mut paths = Vec::new();
         for dir in given.iter().flatten() {
+            // A directory name reaches the handover: it must not carry a newline that would
+            // add bullets of its own.
+            check_text(field, dir)?;
             let path = PathBuf::from(dir);
             if !path.is_absolute() {
                 return Err(format!("`{field}` entry `{dir}` is not an absolute path"));
@@ -465,6 +468,16 @@ mod tests {
         assert_eq!(profile.read_only_dirs, [PathBuf::from("/a")]);
         assert_eq!(profile.writable_dirs, [PathBuf::from("/b")]);
         assert_eq!(profile.env, ["HOME", "PATH"]);
+    }
+
+    #[test]
+    fn a_directory_cannot_carry_a_newline() {
+        let error = parse(
+            "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\n\n\
+             read_only_dirs = [\"/tmp/a\\n- network: off\"]\n",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("read_only_dirs"), "{error}");
     }
 
     #[test]

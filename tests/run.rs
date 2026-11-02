@@ -75,18 +75,28 @@ case $mode in
     ;;
   outside-write)
     outside="$DOG_WALKER_TASK_DIR/../../../../escaped.txt"
-    if printf 'escaped\n' > "$outside" 2> "$DOG_WALKER_TASK_DIR/outside.log"; then
+    if printf 'escaped\n' > "$outside"; then
       printf 'outside-write: written\n' > "$result"
       exit 1
     fi
-    printf 'outside-write: denied\n' > "$result"
+    if printf 'x' > "$DOG_WALKER_TASK_DIR/handover.md" 2>/dev/null; then edited=yes; else edited=no; fi
+    printf 'outside-write: denied\nedited: %s\n' "$edited" > "$result"
     ;;
-  network)
-    if (exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null; then
-      printf 'network: connected\n' > "$result"
+  denied-write)
+    if printf 'needed\n' > "$DOG_WALKER_TASK_DIR/../../../../needed.txt"; then
+      printf 'the write outside the project worked\n' > "$result"
       exit 1
     fi
-    printf 'network: unreachable\n' > "$result"
+    echo "the harness needed a directory outside the project" >&2
+    exit 1
+    ;;
+  network)
+    if [ -n "${TEST_PORT:-}" ] && (exec 3<>/dev/tcp/127.0.0.1/"$TEST_PORT") 2>/dev/null; then
+      local=reachable
+    else
+      local=unreachable
+    fi
+    printf 'local: %s\ninterfaces: %s\n' "$local" "$(grep -c ':' /proc/net/dev)" > "$result"
     ;;
   git)
     status() { "$@" > /dev/null 2>&1; echo $?; }
@@ -95,14 +105,19 @@ case $mode in
       printf 'diff: %s\n' "$(status git diff --stat)"
       printf 'add: %s\n' "$(status git add .)"
       printf 'commit: %s\n' "$(status git -c user.name=a -c user.email=a@b commit -m sandbox --no-gpg-sign)"
-      printf 'push: %s\n' "$(status git push)"
+      printf 'push: %s\n' "$(status git push "$DOG_WALKER_TASK_DIR/../../../../outside.git" HEAD:refs/heads/main)"
     } > "$result"
+    ;;
+  env-report)
+    printf 'host: %s\n' "${HOST_SECRET:-<unset>}" > "$result"
     ;;
   extras)
     {
       printf 'env: %s\n' "${TEST_VALUE:-<unset>}"
       printf 'read: %s\n' "$(cat "$TEST_READ/file.txt" 2>&1)"
       printf 'write: %s\n' "$(printf 'written\n' > "$TEST_WRITE/file.txt" 2>&1 && echo ok)"
+      printf 'write-read-only: %s\n' "$(printf 'x' > "$TEST_READ/file.txt" 2>/dev/null && echo ok || echo denied)"
+      printf 'write-unlisted: %s\n' "$(printf 'x' > "$TEST_WRITE/../unlisted.txt" 2>/dev/null && echo ok || echo denied)"
     } > "$result"
     ;;
   move-task-dir)
@@ -205,8 +220,26 @@ impl Fixture {
         }
     }
 
-    /// Runs `dog-walker --config <config> <args>` in the project directory.
+    /// Runs `dog-walker --config <config> <args> --unsandboxed` in the project directory.
+    ///
+    /// These tests are about the task lifecycle, not about the sandbox; the sandbox has its
+    /// own tests below, and they need bwrap.
     fn run(&self, args: &[&str]) -> Output {
+        let mut all: Vec<&str> = args.to_vec();
+        if all.first() == Some(&"run") {
+            all.push("--unsandboxed");
+        }
+        binary()
+            .arg("--config")
+            .arg(&self.config)
+            .args(&all)
+            .current_dir(&self.project)
+            .output()
+            .unwrap()
+    }
+
+    /// Runs the same command with the sandbox, for the tests that are about it.
+    fn run_sandboxed(&self, args: &[&str]) -> Output {
         binary()
             .arg("--config")
             .arg(&self.config)
@@ -295,10 +328,14 @@ impl Fixture {
 
 /// Starts `run` in the fixture, so a test can cancel it from another process.
 fn spawn_run(fixture: &Fixture, args: &[&str]) -> std::process::Child {
+    let mut all: Vec<&str> = args.to_vec();
+    if all.first() == Some(&"run") {
+        all.push("--unsandboxed");
+    }
     binary()
         .arg("--config")
         .arg(&fixture.config)
-        .args(args)
+        .args(&all)
         .current_dir(&fixture.project)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -586,7 +623,7 @@ fn at14_the_handover_is_complete_before_the_harness_starts() {
     let handover = fixture.handover();
     assert!(
         handover.contains(
-            "handover-at-start:\n+++\nid = \"0001\"\nprofile = \"alpha\"\nstatus = \"running\"\n+++\n\n# Task 0001\n\n## Sandbox\n\n- tool: bwrap\n"
+            "handover-at-start:\n+++\nid = \"0001\"\nprofile = \"alpha\"\nstatus = \"running\"\n+++\n\n# Task 0001\n\n## Sandbox\n\n"
         ),
         "the snapshot holds the brief before the harness runs: {handover}"
     );
@@ -607,8 +644,6 @@ fn at15_a_status_edited_by_the_harness_is_overwritten() {
         handover.contains("## Brief\n\nKeep it small."),
         "{handover}"
     );
-    // R10: inside the sandbox the handover is read-only, so the write above fails.
-    assert!(handover.contains("edited: no"), "{handover}");
 }
 
 // AT15 (R12): a task that ends failed says so, whatever the harness wrote.
@@ -1068,36 +1103,83 @@ fn init_repo(project: &Path) {
 // AT19 (R7, R16): a write outside the project fails at OS level, whatever the harness says.
 #[test]
 fn at19_a_write_outside_the_project_is_denied() {
+    if !sandbox_available("at19_a_write_outside_the_project_is_denied") {
+        return;
+    }
     let fixture = Fixture::new("at19", "outside-write");
-    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
     assert!(handover.contains("## Sandbox"), "{handover}");
     assert!(handover.contains("- tool: bwrap"), "{handover}");
     assert!(handover.contains("outside-write: denied"), "{handover}");
+    assert!(handover.contains("edited: no"), "{handover}");
+    assert!(
+        fixture.log().contains("Read-only file system"),
+        "the denial is in the harness log: {}",
+        fixture.log()
+    );
     assert!(
         !fixture.dir.path().join("escaped.txt").exists(),
         "the write escaped the project"
     );
 }
 
-// AT20 (R16): with `network = false`, the network is unreachable.
+// AT20 (R16): the network is there by default and cut with `network = false`. The host's
+// listener is the positive control: the test would not pass on a machine with no network.
 #[test]
-fn at20_the_network_is_unreachable_when_off() {
-    let fixture = Fixture::with_policy("at20", "network", "network = false");
-    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+fn at20_the_network_is_there_and_can_be_cut() {
+    if !sandbox_available("at20_the_network_is_there_and_can_be_cut") {
+        return;
+    }
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+
+    let on = Fixture::with_policy("at20-on", "network", "env = [\"TEST_PORT\"]");
+    let out = binary()
+        .arg("--config")
+        .arg(&on.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&on.project)
+        .env("TEST_PORT", &port)
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
-    let handover = fixture.handover();
+    let handover = on.handover();
+    assert!(handover.contains("- network: on"), "{handover}");
+    assert!(handover.contains("local: reachable"), "{handover}");
+
+    let off = Fixture::with_policy(
+        "at20-off",
+        "network",
+        "network = false\nenv = [\"TEST_PORT\"]",
+    );
+    let out = binary()
+        .arg("--config")
+        .arg(&off.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&off.project)
+        .env("TEST_PORT", &port)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = off.handover();
     assert!(handover.contains("- network: off"), "{handover}");
-    assert!(handover.contains("network: unreachable"), "{handover}");
+    assert!(handover.contains("local: unreachable"), "{handover}");
+    // One interface, `lo`: no way out at all.
+    assert!(handover.contains("interfaces: 1"), "{handover}");
 }
 
-// AT21 (R16a): `.git` is read-only by default: log and diff work, add and commit fail.
+// AT26 (R16a): `.git` is read-only by default: log and diff work, add and commit fail. A push
+// to a remote outside the project fails too, since that path is not in the sandbox.
 #[test]
-fn at21_git_is_read_only_by_default() {
-    let fixture = Fixture::new("at21", "git");
+fn at26_git_is_read_only_by_default() {
+    if !sandbox_available("at26_git_is_read_only_by_default") {
+        return;
+    }
+    let fixture = Fixture::new("at26", "git");
     init_repo(&fixture.project);
-    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
     assert!(handover.contains("- git: read-only"), "{handover}");
@@ -1108,24 +1190,32 @@ fn at21_git_is_read_only_by_default() {
     assert!(!handover.contains("push: 0"), "{handover}");
 }
 
-// AT21 (R20): a profile may list `.git` writable, and then the harness can add and commit.
+// AT26 (R20): a profile may list `.git` writable, and then the harness can add and commit;
+// a push outside still fails.
 #[test]
-fn at21_git_can_be_writable() {
+fn at26_git_can_be_writable() {
+    if !sandbox_available("at26_git_can_be_writable") {
+        return;
+    }
     let fixture = Fixture::with_policy("at21-writable", "git", "git = \"writable\"");
     init_repo(&fixture.project);
-    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
     assert!(handover.contains("- git: writable"), "{handover}");
     assert!(handover.contains("add: 0"), "{handover}");
     assert!(handover.contains("commit: 0"), "{handover}");
+    assert!(!handover.contains("push: 0"), "{handover}");
 }
 
 // AT22 (R20): extra directories and variables from the profile reach the harness, and the
 // handover lists them.
 #[test]
-fn at22_extra_dirs_and_variables_reach_the_harness() {
-    let fixture = Fixture::new("at22", "extras");
+fn at25_extra_dirs_and_variables_reach_the_harness() {
+    if !sandbox_available("at25_extra_dirs_and_variables_reach_the_harness") {
+        return;
+    }
+    let fixture = Fixture::new("at25", "extras");
     let shared = fixture.dir.path().join("shared");
     let scratch = fixture.dir.path().join("scratch");
     fs::create_dir_all(&shared).unwrap();
@@ -1154,7 +1244,10 @@ fn at22_extra_dirs_and_variables_reach_the_harness() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
+    assert!(handover.contains("- tool: bwrap"), "{handover}");
     assert!(handover.contains("env: hello"), "{handover}");
+    assert!(handover.contains("write-read-only: denied"), "{handover}");
+    assert!(handover.contains("write-unlisted: denied"), "{handover}");
     assert!(handover.contains("read: from the shared dir"), "{handover}");
     assert!(handover.contains("write: ok"), "{handover}");
     assert!(
@@ -1177,8 +1270,8 @@ fn at22_extra_dirs_and_variables_reach_the_harness() {
 
 // AT23 (R17): without bwrap, `run` refuses and names the opt-out.
 #[test]
-fn at23_without_bwrap_run_refuses_unless_opt_out() {
-    let fixture = Fixture::new("at23", "result");
+fn at22_without_bwrap_run_refuses_unless_opt_out() {
+    let fixture = Fixture::new("at22", "result");
     let out = binary()
         .arg("--config")
         .arg(&fixture.config)
@@ -1194,8 +1287,8 @@ fn at23_without_bwrap_run_refuses_unless_opt_out() {
 
 // AT23 (R17): with the explicit opt-out it runs, and the handover records the unsandboxed run.
 #[test]
-fn at23_without_bwrap_the_opt_out_runs_and_records_it() {
-    let fixture = Fixture::new("at23-none", "result");
+fn at22_without_bwrap_the_opt_out_runs_and_records_it() {
+    let fixture = Fixture::new("at22-none", "result");
     let script = fixture.dir.path().join("plain.sh");
     fs::write(
         &script,
@@ -1226,6 +1319,50 @@ fn at23_without_bwrap_the_opt_out_runs_and_records_it() {
     let handover = fixture.handover();
     assert!(handover.contains("- tool: none"), "{handover}");
     assert!(handover.contains("ran without a sandbox"), "{handover}");
+}
+
+// AT8 (R7): an operation outside the policy is denied with no prompt; the task ends failed,
+// and the policy and the denial are recorded.
+#[test]
+fn at8_a_denied_operation_fails_the_task_and_is_traceable() {
+    if !sandbox_available("at8_a_denied_operation_fails_the_task_and_is_traceable") {
+        return;
+    }
+    let fixture = Fixture::new("at8", "denied-write");
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"failed\""), "{handover}");
+    assert!(handover.contains("- tool: bwrap"), "{handover}");
+    assert!(handover.contains("- network: on"), "{handover}");
+    assert!(
+        fixture.log().contains("Read-only file system"),
+        "the denial is in the harness log: {}",
+        fixture.log()
+    );
+    assert!(!fixture.dir.path().join("needed.txt").exists());
+}
+
+// AT21 (R16): the environment is the allowlist, not the runner's. A secret the runner has is
+// invisible to the harness and never reaches the handover.
+#[test]
+fn at21_a_host_secret_is_invisible() {
+    if !sandbox_available("at21_a_host_secret_is_invisible") {
+        return;
+    }
+    let fixture = Fixture::new("at21-secret", "env-report");
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("HOST_SECRET", "topsecret")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("host: <unset>"), "{handover}");
+    assert!(!handover.contains("topsecret"), "{handover}");
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.

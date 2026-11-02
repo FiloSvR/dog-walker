@@ -323,7 +323,7 @@ mod tests {
 
     /// A plan without the sandbox: these tests are about waiting, not about bwrap.
     fn plan(profile: &Profile) -> Plan {
-        Plan::new(profile, true).unwrap()
+        Plan::new(profile, Path::new("."), true).unwrap()
     }
 
     /// A script that runs `body` and can be a profile's command.
