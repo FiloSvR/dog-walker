@@ -12,9 +12,7 @@ CI runs three contexts (`docs/agents/tracker.md`):
   before is a finding.
 - `review-guard`: red while `needs/review` is on. It is red by design until the review that
   completes the round removes the label. It runs from `main` on `pull_request_target` with no
-  checkout, so a pull request cannot make it green by editing it or its workflow, once the
-  rollout in `docs/agents/tracker.md` has deleted the old `pull_request` copy; until then that
-  copy still runs the pull request's version of the file.
+  checkout, so a pull request cannot make it green by editing it or its workflow.
 
 A green build means those pass; it says nothing about the rules below that tooling cannot see.
 
@@ -44,6 +42,5 @@ Kinds that need a second, independent review, on top of the default list:
 - anything that changes the handover's ownership or write path.
 - anything under `.github/workflows/` and any change to the repository ruleset: `check` and
   `test` run the workflow files a pull request carries, so a pull request can change the checks
-  that gate it (`review-guard` runs from `main` and cannot be changed this way after the rollout
-  in `docs/agents/tracker.md` finishes). The second review is always owed, whatever the first
-  rated.
+  that gate it (`review-guard` runs from `main` and cannot be changed this way). The second
+  review is always owed, whatever the first rated.
