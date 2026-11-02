@@ -13,7 +13,8 @@ The fake harness is a small test-only binary with scripted behaviours (write a
 result, write a malformed one, hang, read its environment, attempt a forbidden
 write, try the network, call `run`). Sandbox tests use the real `bwrap`, since
 they check OS-level effects; they are skipped with a loud message when `bwrap`
-or user namespaces are missing. Everything runs offline. The AT id is in the
+or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to a
+non-empty value (CI sets it), in which case a missing sandbox fails them. Everything runs offline. The AT id is in the
 test name, and a failing test prints the fake harness's output.
 
 ## Commands
@@ -34,7 +35,8 @@ The sandbox tests run on the runner, not skipped: the `test` job installs `bubbl
 switches off Ubuntu's AppArmor restriction on unprivileged user namespaces, and sets
 `DOG_WALKER_REQUIRE_SANDBOX=1`, which turns a skip into a failure, so a runner that cannot
 sandbox is noticed. Third-party actions are not used; the two official ones (`actions/checkout`,
-`actions/cache`) are pinned to a commit.
+`actions/cache`) are pinned to a commit. Only downloaded crates and the `cargo-deny` binary are
+cached, never build output, so a poisoned cache cannot become a build.
 
 ## Dependencies
 

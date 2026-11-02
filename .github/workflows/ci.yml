@@ -12,11 +12,13 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push cancels an older run on a pull request, never a run on main.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  CARGO_DENY_VERSION: "0.20.2"
 
 jobs:
   check:
@@ -27,23 +29,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Cache crates and build output
+      - name: Cache downloaded crates
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: check-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: crates-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: Cache cargo-deny
         id: deny
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-deny
-          key: cargo-deny-0.20.2-${{ runner.os }}
+          key: cargo-deny-${{ env.CARGO_DENY_VERSION }}-${{ runner.os }}
       - name: Install cargo-deny
         if: steps.deny.outputs.cache-hit != 'true'
-        run: cargo install --locked cargo-deny --version 0.20.2
+        run: cargo install --locked cargo-deny --version "$CARGO_DENY_VERSION"
       - name: Format
         run: cargo fmt --check
       - name: Lints
@@ -62,14 +63,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Cache crates and build output
+      - name: Cache downloaded crates
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: test-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: crates-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: Install bubblewrap and allow user namespaces
         run: |
           sudo apt-get update
