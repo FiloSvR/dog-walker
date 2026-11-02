@@ -116,12 +116,16 @@ Checks: `at8_a_denied_operation_fails_the_task_and_is_traceable`,
 
 ## Project and task settings
 
-A profile is the policy (R3). A project's `.dog-walker/config.toml` and a task's `--network` and
-`--git` flags may only tighten it: the network can go off but not on, `.git` can go from
-writable to read-only but not back, and the directory and environment lists can shrink but not
-grow (adding a read-only directory is more to read, so it is a loosening too). Anything else is
-rejected, naming the field and who asked. The effective policy is what the handover records.
-`Plan::from_policy` builds the sandbox from it.
+A profile is the policy (R3). A project's `.dog-walker/config.toml` takes the profile's five
+policy keys and can only tighten them; a task's `--network` and `--git` flags tighten the same
+two fields. Absent fields inherit, the network can go off but not on, `.git` can go from
+writable to read-only but not back, and the environment list can shrink. The directory lists
+follow what the mount would do: a read-only directory can be added inside the project or a
+writable directory (it takes write access away) but not elsewhere (it would be more to read),
+and one that protects the project or a writable directory cannot be dropped. Anything else is
+rejected, naming the field and who asked. The project file must be a regular file inside the
+project: a symlink out of it is refused, not read. The effective policy is what the handover
+records, and `Plan::from_policy` builds the sandbox from it.
 
 Checks: `at4_a_project_config_can_tighten`, `at4_a_project_config_that_loosens_is_named`,
 `at4_a_project_config_cannot_add_a_directory`, `at4_a_malformed_project_config_is_named`,

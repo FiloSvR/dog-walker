@@ -1457,6 +1457,12 @@ fn no_process_runs(path: &Path) -> bool {
     }
 }
 
+/// Adds lines to the secondary profile of an existing fixture.
+fn add_policy(fixture: &Fixture, extra: &str) {
+    let text = fs::read_to_string(&fixture.config).unwrap();
+    fs::write(&fixture.config, format!("{text}{extra}\n")).unwrap();
+}
+
 /// Writes `.dog-walker/config.toml` in the project.
 fn project_config(fixture: &Fixture, text: &str) {
     let dir = fixture.project.join(".dog-walker");
@@ -1470,15 +1476,23 @@ fn at4_a_project_config_can_tighten() {
     if !sandbox_available("at4_a_project_config_can_tighten") {
         return;
     }
-    let fixture = Fixture::new("at4-tight", "result");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+    let fixture = Fixture::with_policy("at4-tight", "network", "env = [\"TEST_PORT\"]");
     project_config(&fixture, "network = false\n");
-    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("TEST_PORT", &port)
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
-    assert!(
-        fixture.handover().contains("- network: off"),
-        "{}",
-        fixture.handover()
-    );
+    let handover = fixture.handover();
+    assert!(handover.contains("- network: off"), "{handover}");
+    // The sandbox really has no way to the listener the test holds open.
+    assert!(handover.contains("local: unreachable"), "{handover}");
 }
 
 // AT4 (R3): a project config that loosens is rejected, and the field is named.
@@ -1496,6 +1510,27 @@ fn at4_a_project_config_that_loosens_is_named() {
     assert!(!fixture.tasks().exists());
 }
 
+// AT4 (R3): a project config may not drop a read-only directory that protects the project.
+#[test]
+fn at4_a_project_config_cannot_drop_a_protecting_directory() {
+    let fixture = Fixture::new("at4-drop", "result");
+    let protected = fixture.project.join("protected");
+    fs::create_dir_all(&protected).unwrap();
+    add_policy(
+        &fixture,
+        &format!("read_only_dirs = [\"{}\"]", protected.display()),
+    );
+    project_config(&fixture, "read_only_dirs = []\n");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("project config") && err.contains("read_only_dirs"),
+        "{err}"
+    );
+    assert!(!fixture.tasks().exists());
+}
+
 // AT4 (R3): a project config may not add a directory the profile does not list.
 #[test]
 fn at4_a_project_config_cannot_add_a_directory() {
@@ -1504,6 +1539,39 @@ fn at4_a_project_config_cannot_add_a_directory() {
     let out = fixture.run(&["run", "alpha", "Do the thing."]);
     assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
     assert!(stderr(&out).contains("read_only_dirs"), "{}", stderr(&out));
+}
+
+// AT4 (R3): a project config that points out of the project is refused, not read.
+#[test]
+fn at4_a_symlinked_project_config_is_refused() {
+    let fixture = Fixture::new("at4-link", "result");
+    let dir = fixture.project.join(".dog-walker");
+    fs::create_dir_all(&dir).unwrap();
+    let target = fixture.dir.path().join("outside.toml");
+    fs::write(&target, "network = false\n").unwrap();
+    std::os::unix::fs::symlink(&target, dir.join("config.toml")).unwrap();
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("not a regular file"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!fixture.tasks().exists());
+}
+
+// AT4 (R3): a project config with a bad `git` value names the file.
+#[test]
+fn at4_a_bad_git_mode_names_the_project_config() {
+    let fixture = Fixture::new("at4-git-mode", "result");
+    project_config(&fixture, "git = \"sometimes\"\n");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("sometimes") && err.contains("config.toml"),
+        "{err}"
+    );
 }
 
 // AT4 (R3): a project config that is not TOML is named.

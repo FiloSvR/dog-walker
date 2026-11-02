@@ -232,10 +232,15 @@ fn run_task(
     // The profile is the policy; the project config and the task may only tighten it (R3).
     let policy = Policy::checked(profile)?;
     let policy = match config::project_config(&project)? {
-        Some(project) => project.resolve(&policy, "the project config")?,
+        Some(project_config) => {
+            let origin = format!("the project config {}", project_config.path().display());
+            project_config
+                .request()
+                .resolve(&policy, &project, &origin)?
+        }
         None => policy,
     };
-    let policy = request.resolve(&policy, "the task request")?;
+    let policy = request.resolve(&policy, &project, "the task request")?;
     let plan = Plan::from_policy(policy, &project, unsandboxed)?;
     // A sandbox that cannot be set up is a config error, not a failed task.
     plan.check(profile, &project)?;

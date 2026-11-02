@@ -28,6 +28,8 @@ pub enum ConfigError {
     ManyMain { names: String },
     #[error("cannot read the project config {}: {source}", path.display())]
     ReadProjectConfig { path: PathBuf, source: io::Error },
+    #[error("the project config {} is not a regular file inside the project", path.display())]
+    UnsafeProjectConfig { path: PathBuf },
     #[error("invalid project config {}:\n{source}", path.display())]
     ProjectConfig {
         path: PathBuf,
@@ -85,8 +87,6 @@ pub enum LaunchError {
     Task(#[from] TaskError),
     #[error(transparent)]
     Sandbox(#[from] SandboxError),
-    #[error(transparent)]
-    Override(#[from] OverrideError),
     #[error("profile `{profile}` has no `command` to run")]
     NoCommand { profile: String },
     #[error("cannot open the log {}: {source}", path.display())]

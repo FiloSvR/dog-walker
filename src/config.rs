@@ -350,14 +350,46 @@ fn check_text(field: &str, value: &str) -> Result<(), String> {
 }
 
 /// The project's own policy, `.dog-walker/config.toml`, which may only tighten the profile.
-pub fn project_config(project: &Path) -> Result<Option<crate::sandbox::Request>, ConfigError> {
+pub fn project_config(project: &Path) -> Result<Option<ProjectConfig>, ConfigError> {
     let path = project.join(".dog-walker").join("config.toml");
-    match fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text)
-            .map(Some)
-            .map_err(|source| ConfigError::ProjectConfig { path, source }),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(ConfigError::ReadProjectConfig { path, source }),
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(ConfigError::ReadProjectConfig { path, source }),
+    };
+    // A config that points out of the project could read anything the runner can (or be a
+    // FIFO that hangs the run): only a regular file inside the project's own `.dog-walker`.
+    let canonical = fs::canonicalize(&path).map_err(|source| ConfigError::ReadProjectConfig {
+        path: path.clone(),
+        source,
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || !canonical.starts_with(project) {
+        return Err(ConfigError::UnsafeProjectConfig { path: canonical });
+    }
+    let text = fs::read_to_string(&canonical).map_err(|source| ConfigError::ReadProjectConfig {
+        path: canonical.clone(),
+        source,
+    })?;
+    let request = toml::from_str(&text).map_err(|source| ConfigError::ProjectConfig {
+        path: canonical,
+        source,
+    })?;
+    Ok(Some(ProjectConfig { path, request }))
+}
+
+/// A project's policy file: where it is, and what it asks for.
+pub struct ProjectConfig {
+    path: PathBuf,
+    request: crate::sandbox::Request,
+}
+
+impl ProjectConfig {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn request(&self) -> &crate::sandbox::Request {
+        &self.request
     }
 }
 
