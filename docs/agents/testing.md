@@ -23,6 +23,19 @@ test name, and a failing test prints the fake harness's output.
 - Format fix: `cargo fmt`.
 - Tools: `cargo install --locked cargo-deny`. Building any crate needs a C linker (`gcc`).
 
+## CI
+
+`.github/workflows/ci.yml` runs on every pull request and every push to `main`:
+
+- `check`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check`.
+- `test`: the whole suite, `cargo test --no-fail-fast`.
+
+The sandbox tests run on the runner, not skipped: the `test` job installs `bubblewrap` and
+switches off Ubuntu's AppArmor restriction on unprivileged user namespaces, and sets
+`DOG_WALKER_REQUIRE_SANDBOX=1`, which turns a skip into a failure, so a runner that cannot
+sandbox is noticed. Third-party actions are not used; the two official ones (`actions/checkout`,
+`actions/cache`) are pinned to a commit.
+
 ## Dependencies
 
 Rust 2024, pinned by `rust-toolchain.toml` and `rust-version`. Allowed by default:

@@ -1,0 +1,29 @@
+# Fails while a pull request carries the `needs/review` label, and passes again as soon as
+# the label is removed, without a new push: the label events start a new run on the same commit.
+name: review-guard
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: review-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-guard:
+    name: review-guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Fail while a review is owed
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if printf '%s' "$LABELS" | grep -q '"needs/review"'; then
+            echo "needs/review is on: a review is owed before this can merge."
+            exit 1
+          fi
+          echo "No review owed."

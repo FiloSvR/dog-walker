@@ -4,9 +4,16 @@ Read by `review`.
 
 ## Mechanical checks
 
-The check command in `docs/agents/testing.md` (format, clippy with its denials, `cargo deny`)
-and the acceptance tests. A green build means those pass; it says nothing about the rules
-below that tooling cannot see.
+CI runs three contexts (`docs/agents/tracker.md`):
+
+- `check`: format, clippy with its denials, `cargo deny`.
+- `test`: the whole suite, including the sandbox tests, which fail instead of skipping when
+  the runner cannot sandbox. Read the job output: a green `test` with fewer tests than
+  before is a finding.
+- `review-guard`: red while `needs/review` is on. It is red by design until the review that
+  completes the round removes the label.
+
+A green build means those pass; it says nothing about the rules below that tooling cannot see.
 
 ## Escape hatches
 

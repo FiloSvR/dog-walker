@@ -188,13 +188,20 @@ fn at27_instructions_name_run_exit_code_and_handover() {
 }
 
 // AT24 (R19): a normal invocation makes no network request of its own: it works in a
-// network-less namespace. Skipped, loudly, where bwrap is unavailable.
+// network-less namespace. Skipped, loudly, where bwrap is unavailable, unless
+// DOG_WALKER_REQUIRE_SANDBOX is set (CI sets it).
 #[test]
 fn at24_works_without_network() {
     let probe = Command::new("bwrap")
         .args(["--ro-bind", "/", "/", "--unshare-net", "true"])
         .output();
     if !matches!(probe, Ok(ref o) if o.status.success()) {
+        // CI sets DOG_WALKER_REQUIRE_SANDBOX, so a runner that cannot sandbox fails here
+        // instead of skipping the sandbox tests without anyone noticing.
+        assert!(
+            std::env::var_os("DOG_WALKER_REQUIRE_SANDBOX").is_none(),
+            "bwrap or user namespaces are unavailable, but DOG_WALKER_REQUIRE_SANDBOX is set"
+        );
         eprintln!("SKIPPED at24_works_without_network: bwrap or user namespaces unavailable");
         return;
     }
