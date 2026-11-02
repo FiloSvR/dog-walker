@@ -5,10 +5,14 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
 use crate::error::ConfigError;
+
+/// The longest timeout a profile may ask for, so a deadline always fits an `Instant`.
+const MAX_TIMEOUT: Duration = Duration::from_hours(365 * 24);
 
 /// The harnesses dog-walker can drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +81,8 @@ pub struct Profile {
     pub harness: Harness,
     pub model: String,
     pub effort: Option<String>,
-    pub timeout_minutes: Option<u32>,
+    /// How long the harness may run; `timeout_minutes` in the file, in minutes.
+    pub timeout: Option<Duration>,
     /// Overrides the adapter's default command: an argv list.
     pub command: Option<Vec<String>>,
     pub main: bool,
@@ -103,7 +108,7 @@ struct RawProfile {
     harness: Option<String>,
     model: Option<String>,
     effort: Option<String>,
-    timeout_minutes: Option<u32>,
+    timeout_minutes: Option<f64>,
     command: Option<Vec<String>>,
     #[serde(default)]
     main: bool,
@@ -187,9 +192,29 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
             ));
         }
     }
-    if raw.timeout_minutes == Some(0) {
-        return Err(fail("`timeout_minutes` must be greater than 0".to_owned()));
-    }
+    let timeout = match raw.timeout_minutes {
+        None => None,
+        Some(minutes) if !minutes.is_finite() || minutes <= 0.0 => {
+            return Err(fail("`timeout_minutes` must be greater than 0".to_owned()));
+        }
+        Some(minutes) => {
+            let seconds = minutes * 60.0;
+            let Ok(timeout) = Duration::try_from_secs_f64(seconds) else {
+                return Err(fail("`timeout_minutes` is too large".to_owned()));
+            };
+            if timeout.is_zero() {
+                return Err(fail("`timeout_minutes` is too small".to_owned()));
+            }
+            // A deadline is added to an `Instant`, which has a smaller range than `Duration`;
+            // a year is the most a task may ask for, and it keeps that addition total.
+            if timeout > MAX_TIMEOUT {
+                return Err(fail(
+                    "`timeout_minutes` must be at most 525600 (a year)".to_owned(),
+                ));
+            }
+            Some(timeout)
+        }
+    };
     if raw
         .command
         .as_ref()
@@ -202,7 +227,7 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         harness,
         model,
         effort: raw.effort,
-        timeout_minutes: raw.timeout_minutes,
+        timeout,
         command: raw.command,
         main: raw.main,
     })
@@ -277,7 +302,7 @@ mod tests {
         let profile = &config.profiles()[0];
         assert_eq!(profile.harness, Harness::Dsh);
         assert_eq!(profile.effort.as_deref(), Some("high"));
-        assert_eq!(profile.timeout_minutes, Some(5));
+        assert_eq!(profile.timeout, Some(Duration::from_secs(300)));
         assert_eq!(
             profile.command.as_deref(),
             Some(&["/bin/x".to_owned(), "-y".to_owned()][..])
@@ -285,11 +310,47 @@ mod tests {
     }
 
     #[test]
-    fn zero_timeout_and_empty_command_are_rejected() {
-        assert!(
-            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=0\n").is_err()
-        );
+    fn bad_timeouts_and_empty_commands_are_rejected() {
+        for timeout in ["0", "-1", "nan", "inf", "1.6e17", "1e-300", "525601"] {
+            assert!(
+                parse(&format!(
+                    "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes={timeout}\n"
+                ))
+                .is_err(),
+                "{timeout}"
+            );
+        }
         assert!(parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ncommand=[]\n").is_err());
+    }
+
+    #[test]
+    fn the_timeout_is_bounded_and_named() {
+        let too_large =
+            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=1e300\n")
+                .unwrap_err();
+        assert!(
+            too_large.to_string().contains("timeout_minutes"),
+            "{too_large}"
+        );
+        let over_a_year =
+            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=525601\n")
+                .unwrap_err();
+        assert!(over_a_year.to_string().contains("at most"), "{over_a_year}");
+        let a_year =
+            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=525600\n")
+                .unwrap();
+        assert_eq!(
+            a_year.profiles()[0].timeout,
+            Some(Duration::from_hours(365 * 24))
+        );
+    }
+
+    #[test]
+    fn a_timeout_may_have_a_fraction_of_a_minute() {
+        let config =
+            parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=0.5\n")
+                .unwrap();
+        assert_eq!(config.profiles()[0].timeout, Some(Duration::from_secs(30)));
     }
 
     #[test]

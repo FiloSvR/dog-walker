@@ -2,15 +2,16 @@
 //! the exit contract. They run the compiled binary against a fake harness: a small script the
 //! profile's `command` points at, which behaves as its first argument says.
 
-// Why: clippy.toml exempts `#[test]` functions from the unwrap denial, but not the helper
-// functions of an integration-test file. A failing helper should fail the test.
-#![allow(clippy::unwrap_used)]
+// Why: clippy.toml exempts `#[test]` functions from the unwrap and panic denials, but not the
+// helper functions of an integration-test file. A failing helper should fail the test.
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 use std::fs;
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 /// The fake harness. Its first argument is the behaviour, the last is the brief dog-walker
 /// passes; it writes where `DOG_WALKER_RESULT_PATH` says.
@@ -39,6 +40,11 @@ case $mode in
   slow)
     sleep 0.2
     printf 'slept first\n' > "$result"
+    ;;
+  hang)
+    sleep 300 &
+    echo "$$ $!" > "$DOG_WALKER_TASK_DIR/pids"
+    wait
     ;;
   no-result)
     echo "the harness ran and wrote nothing"
@@ -122,7 +128,15 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str, mode: &str) -> Self {
+        Fixture::with_timeout(name, mode, None)
+    }
+
+    /// A fixture whose secondary profile has `timeout_minutes` set.
+    fn with_timeout(name: &str, mode: &str, timeout_minutes: Option<f64>) -> Self {
         let dir = TempDir::new(name);
+        let timeout = timeout_minutes
+            .map(|minutes| format!("timeout_minutes = {minutes}\n"))
+            .unwrap_or_default();
         let script = dir.path().join("fake.sh");
         fs::write(&script, FAKE_HARNESS).unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
@@ -135,7 +149,7 @@ impl Fixture {
                 "[profiles.zeta]\nharness = \"claude\"\nmodel = \"claude-fable-5-1\"\n\
                  effort = \"high\"\nmain = true\ncommand = [\"{script}\", \"{mode}\"]\n\n\
                  [profiles.alpha]\nharness = \"pi\"\nmodel = \"local/qwen\"\n\
-                 effort = \"medium\"\ncommand = [\"{script}\", \"{mode}\"]\n",
+                 effort = \"medium\"\n{timeout}command = [\"{script}\", \"{mode}\"]\n",
                 script = script.display()
             ),
         )
@@ -181,6 +195,93 @@ impl Fixture {
     fn log(&self) -> String {
         let path = self.tasks().join(self.only_task()).join("harness.log");
         fs::read_to_string(path).unwrap()
+    }
+
+    fn task_dir(&self) -> PathBuf {
+        self.tasks().join(self.only_task())
+    }
+
+    /// Waits until the harness has written its pids, then checks that none is left.
+    fn assert_tree_gone(&self) {
+        let pids = fs::read_to_string(self.task_dir().join("pids")).unwrap();
+        assert_eq!(pids.split_whitespace().count(), 2, "{pids}");
+        for pid in pids.split_whitespace() {
+            let path = PathBuf::from(format!("/proc/{pid}"));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while path.exists() {
+                assert!(Instant::now() < deadline, "{pid} is still running: {pids}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+
+    /// Waits until the harness has written its pids into its task folder.
+    /// Kills whatever the hung harness left, best effort: the pids it wrote, if any.
+    fn kill_tree(&self) {
+        if let Ok(entries) = fs::read_dir(self.tasks()) {
+            for entry in entries.flatten() {
+                if let Ok(pids) = fs::read_to_string(entry.path().join("pids")) {
+                    for pid in pids.split_whitespace() {
+                        let _ = Command::new("kill")
+                            .args(["-KILL", pid])
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status();
+                    }
+                }
+            }
+        }
+    }
+
+    fn wait_for_pids(&self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Ok(entries) = fs::read_dir(self.tasks()) {
+                for entry in entries.flatten() {
+                    if entry.path().join("pids").exists() {
+                        return;
+                    }
+                }
+            }
+            assert!(Instant::now() < deadline, "the harness did not start");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// Starts `run` in the fixture, so a test can cancel it from another process.
+fn spawn_run(fixture: &Fixture, args: &[&str]) -> std::process::Child {
+    binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(args)
+        .current_dir(&fixture.project)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+/// Waits for a spawned run, ending it if it outlives `limit`: a broken timeout or cancel should
+/// fail the test, not hang it, and must not leave the harness behind (it leads its own group,
+/// so killing the runner does not reach it).
+fn wait_with_deadline(
+    fixture: &Fixture,
+    mut child: std::process::Child,
+    limit: Duration,
+) -> Output {
+    let started = Instant::now();
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return child.wait_with_output().unwrap();
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            fixture.kill_tree();
+            panic!("the run did not end within {limit:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -718,6 +819,177 @@ fn at15_a_moved_task_folder_is_refused() {
         text.contains("status = \"running\""),
         "the end state was not written through the link: {text}"
     );
+}
+
+// AT17 (R14): a task past its timeout has its tree killed and ends `timed-out`.
+#[test]
+fn at17_a_timeout_kills_the_tree_and_ends_timed_out() {
+    let fixture = Fixture::with_timeout("at17", "hang", Some(0.03));
+    let started = Instant::now();
+    let child = spawn_run(&fixture, &["run", "alpha", "Do the thing."]);
+    let out = wait_with_deadline(&fixture, child, Duration::from_secs(15));
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(
+        started.elapsed() >= Duration::from_millis(1500),
+        "the deadline was honoured: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the profile's 0.03 minutes, not the default: {:?}",
+        started.elapsed()
+    );
+    assert!(printed_path(&out).ends_with("handover.md"));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"timed-out\""), "{handover}");
+    // The handover text comes from the same timeout, so it pins the 1.8 seconds.
+    assert!(
+        handover.contains("The task timed out after 1.8 seconds."),
+        "{handover}"
+    );
+    fixture.assert_tree_gone();
+}
+
+// AT18 (R14): Ctrl-C kills the tree and ends `cancelled`.
+#[test]
+fn at18_ctrl_c_kills_the_tree_and_ends_cancelled() {
+    let fixture = Fixture::new("at18-int", "hang");
+    let child = spawn_run(&fixture, &["run", "alpha", "Do the thing."]);
+    fixture.wait_for_pids();
+    let killed = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let out = wait_with_deadline(&fixture, child, Duration::from_secs(15));
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"cancelled\""), "{handover}");
+    assert!(handover.contains("The task was cancelled."), "{handover}");
+    assert!(printed_path(&out).ends_with("handover.md"));
+    fixture.assert_tree_gone();
+}
+
+// AT18 (R14): a TERM to the runner cancels too.
+#[test]
+fn at18_a_term_to_the_runner_cancels() {
+    let fixture = Fixture::new("at18-term", "hang");
+    let child = spawn_run(&fixture, &["run", "alpha", "Do the thing."]);
+    fixture.wait_for_pids();
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let out = wait_with_deadline(&fixture, child, Duration::from_secs(15));
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(fixture.handover().contains("status = \"cancelled\""));
+    fixture.assert_tree_gone();
+}
+
+// AT18 (R14): `cancel <id>` from another shell kills the tree and ends `cancelled`.
+#[test]
+fn at18_cancel_from_another_shell_kills_the_tree() {
+    let fixture = Fixture::new("at18-cancel", "hang");
+    let child = spawn_run(&fixture, &["run", "alpha", "Do the thing."]);
+    fixture.wait_for_pids();
+    let out = fixture.run(&["cancel", "0001"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("cancel requested"),
+        "{}",
+        stdout(&out)
+    );
+    let out = wait_with_deadline(&fixture, child, Duration::from_secs(15));
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(printed_path(&out).ends_with("handover.md"));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"cancelled\""), "{handover}");
+    assert!(handover.contains("The task was cancelled."), "{handover}");
+    assert!(
+        !fixture.task_dir().join(".cancel").exists(),
+        "the runner removes the marker"
+    );
+    fixture.assert_tree_gone();
+}
+
+// AT18 (R14): cancelling a finished task changes nothing.
+#[test]
+fn at18_cancelling_a_finished_task_changes_nothing() {
+    let fixture = Fixture::new("at18-done", "result");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let task = fixture.task_dir();
+    let before = fs::read_to_string(task.join("handover.md")).unwrap();
+    let out = fixture.run(&["cancel", "0001"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("already done"), "{}", stdout(&out));
+    assert_eq!(
+        fs::read_to_string(task.join("handover.md")).unwrap(),
+        before
+    );
+    assert!(
+        !task.join(".cancel").exists(),
+        "no marker in a finished task"
+    );
+}
+
+// R14: `cancel` refuses a tasks root that is a link, like `run` does.
+#[test]
+fn cancel_refuses_a_symlinked_tasks_root() {
+    let fixture = Fixture::new("cancel-symlink", "result");
+    let outside = fixture.dir.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, fixture.project.join(".dog-walker")).unwrap();
+    let out = fixture.run(&["cancel", "0001"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("symbolic link"), "{}", stderr(&out));
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+}
+
+// R14: `cancel` on a task whose handover is not written yet still leaves the request.
+#[test]
+fn cancel_tolerates_a_missing_handover() {
+    let fixture = Fixture::new("cancel-no-handover", "result");
+    let task = fixture.tasks().join("0001-half");
+    fs::create_dir_all(&task).unwrap();
+    let out = fixture.run(&["cancel", "0001"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("cancel requested"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(task.join(".cancel").exists());
+}
+
+// R14: a handover that is a pipe is not read, so `cancel` does not hang on it.
+#[test]
+fn cancel_does_not_hang_on_a_fifo_handover() {
+    let fixture = Fixture::new("cancel-fifo", "result");
+    let task = fixture.tasks().join("0001-half");
+    fs::create_dir_all(&task).unwrap();
+    let fifo = Command::new("mkfifo")
+        .arg(task.join("handover.md"))
+        .status()
+        .unwrap();
+    assert!(fifo.success());
+    let child = spawn_run(&fixture, &["cancel", "0001"]);
+    let out = wait_with_deadline(&fixture, child, Duration::from_secs(10));
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(task.join(".cancel").exists());
+}
+
+// R14: `cancel` names a task it cannot find, and a value that is not an id.
+#[test]
+fn cancel_names_a_missing_or_bad_id() {
+    let fixture = Fixture::new("cancel-bad", "result");
+    let out = fixture.run(&["cancel", "0001"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("0001"), "{}", stderr(&out));
+    let out = fixture.run(&["cancel", "not-a-number"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("not-a-number"), "{}", stderr(&out));
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.

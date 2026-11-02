@@ -14,8 +14,9 @@ Read by `change`, `architect` and `plan`.
 a stub `gh` and the real `jq`.
 
 The fake harness is a small script that a test writes and a profile's `command` points at:
-its first argument is the behaviour (write a result, write a malformed one, do nothing, edit
-the handover) and the brief arrives as its last argument, so `tests/run.rs` exercises the
+its first argument is the behaviour (write a result, write a malformed one, do nothing, hang —
+it writes its pid and its child's into `pids` — edit the handover) and the brief arrives as its
+last argument, so `tests/run.rs` exercises the
 same launcher a user configures. It is not part of the binary, and there are no test-only
 variants in it.
 
@@ -54,8 +55,8 @@ cached, never build output, so a poisoned cache cannot become a build.
 ## Dependencies
 
 Rust 2024, pinned by `rust-toolchain.toml` and `rust-version`. Allowed by default:
-`clap`, `serde`, `toml`, `serde_json`, `thiserror` and a thin OS library such as
-`rustix`. No async runtime and no `anyhow`. Every crate is added with
+`clap`, `serde`, `toml`, `serde_json`, `thiserror`, a thin OS library such as `rustix`, and
+`signal-hook` for the Ctrl-C flag. No async runtime and no `anyhow`. Every crate is added with
 `default-features = false` and only the features it needs; versions are exact,
 `Cargo.lock` is committed, and `cargo deny` runs in CI. A new dependency needs
 one line in the pull request saying why.
@@ -91,6 +92,10 @@ Followed by `change`, checked by `review`:
   allocated by an atomic `create_dir` retry loop. Task folders are created with mode 0700.
 - **Processes.** A child gets its own process group; cancel and timeout kill the group;
   nothing is left as a zombie.
-- **Time and randomness** are injected, so tests are deterministic.
+- **Time and randomness** are injected, so tests are deterministic. The timeout and cancel
+  tests are the exception: the deadline is the thing under test, so they use the real clock
+  with short deadlines (seconds) instead of a manual one. The launch tests also install the
+  Ctrl-C and TERM handlers in the test process, so `cargo test --lib` ignores Ctrl-C once they
+  have run.
 - **Visibility.** `pub(crate)` by default; `pub` only where the binary or an integration test needs it.
 - **Comments** explain why, not what. A `TODO` carries an issue number.

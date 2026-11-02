@@ -43,3 +43,12 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    which are not mounted by default. Rejected: hiding `.git` (breaks `git status`) and
    matching command names (bwrap cannot).
    Discussion: issue #2.
+
+7. **Cancel is a marker the runner watches, not a signal from the canceller** (D7, 2026-11-03).
+   `cancel <id>` writes `.cancel` into the task folder and exits; the runner, which polls its
+   child and that marker, kills the harness's process group and closes the handover as
+   `cancelled`. The canceller needs no pid file, no permission to signal the runner and no
+   access to its process group, and it cannot hit a recycled pid; a task that has already ended
+   is read from its handover and left untouched. The runner installs a Ctrl-C and a TERM
+   handler for the same reason: whoever stops the run, the handover is closed. Rejected:
+   `kill` from the canceller. Discussion: issue #5.

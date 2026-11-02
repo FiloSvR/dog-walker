@@ -7,16 +7,17 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, ExitStatus};
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
 use crate::config::{self, Config};
 use crate::error::{CliError, ConfigError, Error};
-use crate::handover::Handover;
-use crate::launch;
+use crate::handover::{self, Handover};
+use crate::launch::{self, End};
 use crate::output::{self, exit};
 use crate::status::Status;
-use crate::task::Task;
+use crate::task::{Task, TaskId};
 
 const INSTRUCTIONS: &str = include_str!("instructions.md");
 
@@ -55,7 +56,15 @@ enum Command {
         #[arg(long)]
         allow_main: bool,
     },
+    /// Ask a running task to stop
+    Cancel {
+        /// The task id, the number in its folder name
+        id: String,
+    },
 }
+
+/// A task runs for half an hour unless its profile says otherwise.
+const DEFAULT_TIMEOUT: Duration = Duration::from_mins(30);
 
 /// Runs dog-walker with `args` (including the program name) and returns the exit code.
 pub fn run<I, T>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode
@@ -122,6 +131,7 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             stdout,
             stderr,
         ),
+        Command::Cancel { id } => cancel(id, stdout),
     }
 }
 
@@ -186,6 +196,9 @@ fn run_task(
         .into());
     }
     let brief = brief(task, file)?;
+    // From here on a Ctrl-C is a cancel that closes the handover, not a dead runner; before a
+    // task exists, the default disposition is the right one.
+    launch::watch_for_interrupts()?;
     let project = std::env::current_dir().map_err(|source| CliError::Project { source })?;
     let task = Task::create(&project, &brief)?;
     let handover_path = task.handover_path();
@@ -206,12 +219,21 @@ fn run_task(
             profile.name
         ),
     );
-    let (status, outcome) = match launch::launch(profile, &task, &project, &brief) {
-        Ok(ended) => outcome(&task, ended),
+    let timeout = profile.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    let (status, outcome) = match launch::launch(profile, &task, &project, &brief, timeout) {
+        Ok(End::Exited(ended)) => outcome(&task, ended),
+        Ok(End::TimedOut) => (
+            Status::TimedOut,
+            format!("The task timed out after {}.", duration_text(timeout)),
+        ),
+        Ok(End::Cancelled) => (Status::Cancelled, "The task was cancelled.".to_owned()),
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
     handover.end(status, &outcome)?;
     save(&handover, &task)?;
+    // Only now that the end state is on disk: a cancel that arrives later reads it and backs
+    // off, and one that arrived earlier finds nothing to do.
+    let _ = fs::remove_file(task.directory().join(launch::CANCEL_FILE));
     log(stderr, &format!("dog-walker: task {} {status}", task.id()));
     Ok(if status == Status::Done {
         exit::SUCCESS
@@ -225,6 +247,99 @@ fn save(handover: &Handover, task: &Task) -> Result<(), Error> {
     task.verify()?;
     handover.save(&task.handover_path())?;
     Ok(())
+}
+
+/// A timeout as it reads in the handover.
+fn duration_text(timeout: Duration) -> String {
+    const MINUTE: Duration = Duration::from_secs(60);
+    if timeout >= MINUTE && timeout.subsec_nanos() == 0 && timeout.as_secs().is_multiple_of(60) {
+        let minutes = timeout.as_secs() / 60;
+        return if minutes == 1 {
+            "1 minute".to_owned()
+        } else {
+            format!("{minutes} minutes")
+        };
+    }
+    if timeout == Duration::from_secs(1) {
+        return "1 second".to_owned();
+    }
+    format!("{} seconds", timeout.as_secs_f64())
+}
+
+/// Asks a running task to stop, from another shell: a marker the runner watches for. A task
+/// that has already ended is left exactly as it is.
+fn cancel(id: &str, stdout: &mut dyn Write) -> Result<u8, Error> {
+    let id = TaskId::parse(id.trim()).ok_or_else(|| CliError::BadTaskId { id: id.to_owned() })?;
+    let project = std::env::current_dir().map_err(|source| CliError::Project { source })?;
+    let task = Task::find(&project, id)?.ok_or_else(|| CliError::NoTask { id: id.to_string() })?;
+    task.verify()?;
+    if let Some(status) = finished_status(&task)? {
+        output::line(stdout, &format!("dog-walker: task {id} already {status}"))?;
+        return Ok(exit::SUCCESS);
+    }
+    task.verify()?;
+    let marker = task.directory().join(launch::CANCEL_FILE);
+    match fs::File::create_new(&marker) {
+        Ok(_) => {}
+        Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(source) => {
+            return Err(CliError::Cancel {
+                path: marker,
+                source,
+            }
+            .into());
+        }
+    }
+    // The runner may have closed the task between the read and the marker: take the request
+    // back rather than leave a marker in a finished task.
+    match finished_status(&task) {
+        Ok(None) => {}
+        Ok(Some(status)) => {
+            let _ = fs::remove_file(&marker);
+            output::line(stdout, &format!("dog-walker: task {id} already {status}"))?;
+            return Ok(exit::SUCCESS);
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&marker);
+            return Err(error.into());
+        }
+    }
+    output::line(
+        stdout,
+        &format!("dog-walker: cancel requested for task {id}"),
+    )?;
+    Ok(exit::SUCCESS)
+}
+
+/// The end status in a task's handover, if it has one. A missing handover, or one that is not
+/// a regular file, is not an end: reading it must not follow a link or block on a pipe.
+fn finished_status(task: &Task) -> Result<Option<Status>, CliError> {
+    let path = task.handover_path();
+    let before = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(CliError::ReadHandover { path, source }),
+    };
+    if !before.file_type().is_file() {
+        return Ok(None);
+    }
+    let mut file = fs::File::open(&path).map_err(|source| CliError::ReadHandover {
+        path: path.clone(),
+        source,
+    })?;
+    let opened = file.metadata().map_err(|source| CliError::ReadHandover {
+        path: path.clone(),
+        source,
+    })?;
+    if !opened.is_file() || opened.dev() != before.dev() || opened.ino() != before.ino() {
+        return Ok(None);
+    }
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .map_err(|source| CliError::ReadHandover { path, source })?;
+    Ok(handover::front_matter(&text)
+        .and_then(|front| Status::parse(&front.status))
+        .filter(|status| status.is_end()))
 }
 
 /// One line of log on stderr, if it can be written.
@@ -347,6 +462,24 @@ mod tests {
             exit_code(["dog-walker", "instructions"], &mut Full, &mut io::sink()),
             exit::ERROR
         );
+    }
+
+    #[test]
+    fn durations_read_as_seconds_or_minutes() {
+        for (timeout, text) in [
+            (Duration::from_secs(1), "1 second"),
+            (Duration::from_secs(60), "1 minute"),
+            (Duration::from_secs(90), "90 seconds"),
+            (Duration::from_mins(30), "30 minutes"),
+            (Duration::from_millis(1800), "1.8 seconds"),
+        ] {
+            assert_eq!(duration_text(timeout), text, "{timeout:?}");
+        }
+    }
+
+    #[test]
+    fn the_default_timeout_is_half_an_hour() {
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_mins(30));
     }
 
     #[test]
