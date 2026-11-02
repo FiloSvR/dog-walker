@@ -24,9 +24,10 @@ Read by `plan`, `change` and `review`.
   of its own (groups are shared across workflows, so sharing the name would have let the two
   cancel each other); #26 deleted the old file and gave the new one its name and group back.
   While both were on `main`, a pull request reported the check twice, and #25, a throwaway
-  pull request that replaced the guard with one that always passes, was still BLOCKED with
-  `needs/review` on: GitHub required the `main`-sourced red run to pass, and the green run of
-  the pull request's own copy could not cover it.
+  pull request that replaced the guard with one that always passes, read BLOCKED with
+  `needs/review` on: the `main`-sourced run was red, the pull request's own copy green, and the
+  gate was not covered. Which of two same-named runs decides is not documented, so the window
+  was only as safe as that race; #26 ended it.
   Required CI contexts: `check`, `test` and `review-guard`, required by the repository
   ruleset on `main` (strict: a pull request must be up to date; no bypass actors). The ruleset
   is the owner's; agents do not change it.
@@ -39,11 +40,11 @@ Read by `plan`, `change` and `review`.
   (only fork pull requests are forced read-only). The high-risk review in
   `docs/agents/review.md` is what stands behind those. Requiring pull requests in the ruleset
   is the owner's decision.
-  Queued runs: observed on #24, with the guard that still ran on `pull_request`. Green with the
-  label off, then `needs/review` added: `mergeStateStatus` stayed CLEAN for the couple of
-  seconds before GitHub created the new run, and was BLOCKED from the moment it appeared as
-  queued, through in-progress, until it finished red. A queued run does not leave a stale green
-  check; the green window is only the moment before the run exists. Owner rule: merge only
-  after `review-guard` has finished on the current labels.
+  Queued runs: observed on #24 and again on #26. Green with the label off, then `needs/review`
+  added: `mergeStateStatus` stayed CLEAN for the second or two before GitHub created the new
+  run, and was BLOCKED from the moment a run appeared as queued, through in-progress, until it
+  finished red. A queued run does not leave a stale green check; the green window is only the
+  moment before the run exists. Owner rule: merge only after `review-guard` has finished on the
+  current labels.
 - Board columns: the ones in `plan`.
 - Merge authority: only the owner.
