@@ -1,10 +1,9 @@
 //! Task folders and ids: `.dog-walker/tasks/<id>-<slug>/` (R10).
 //!
-//! An id is a zero-padded counter. It is allocated by creating a directory and retrying when
-//! that name exists, so two tasks started at the same moment cannot take the same id: the
-//! counter is reserved under the bare id first, then renamed to `<id>-<slug>`. Reserving the
-//! bare id is what makes the allocation slug-independent: two different briefs would not
-//! collide on `<id>-<slug>`, and both would be handed the same counter.
+//! An id is a zero-padded counter. It is allocated by creating a marker file for it under
+//! `.dog-walker/ids/` with `create_new`, and retrying with the next id when it exists: the
+//! marker is created atomically, so two tasks started at the same moment cannot take the same
+//! id, and it is never removed, so deleting a task folder does not free its id for reuse.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -50,47 +49,55 @@ pub struct Task {
 impl Task {
     /// Creates the folder for a new task in `project`.
     pub fn create(project: &Path, brief: &str) -> Result<Task, TaskError> {
-        let tasks = project.join(".dog-walker").join("tasks");
-        fs::create_dir_all(&tasks).map_err(|source| TaskError::Create {
-            path: tasks.clone(),
-            source,
-        })?;
+        let root = project.join(".dog-walker");
+        let tasks = root.join("tasks");
+        let ids = root.join("ids");
+        // A previous run inside the project could have replaced any of these with a link to
+        // somewhere else; the task folder and its log must stay where the handover says.
+        reject_symlink(&root)?;
+        reject_symlink(&tasks)?;
+        reject_symlink(&ids)?;
+        private_dirs(&tasks)?;
+        private_dirs(&ids)?;
         let slug = slug(brief);
-        let mut id = next_id(&tasks)?;
+        let mut id = next_id(&ids)?;
         loop {
-            let reserved = tasks.join(id.to_string());
-            match create_private(&reserved) {
-                Ok(()) => {}
+            // The marker is the reservation and it stays: created exactly once, it makes the
+            // id unique among concurrent runs, and it keeps the counter from going back when
+            // a task folder is deleted.
+            let marker = ids.join(format!("{id:04}"));
+            match fs::File::create_new(&marker) {
+                Ok(_) => {}
                 Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
-                    id = id.checked_add(1).ok_or(TaskError::Exhausted)?;
+                    id = bumped(id)?;
                     continue;
                 }
                 Err(source) => {
                     return Err(TaskError::Create {
-                        path: reserved,
+                        path: marker,
                         source,
                     });
                 }
             }
             let directory = tasks.join(format!("{id:04}-{slug}"));
-            // The reservation makes the id unique; this only happens when an older task with
-            // the same id and slug was left behind, so the id is taken and the next one is due.
-            if directory.exists() {
-                let _ = fs::remove_dir(&reserved);
-                id = id.checked_add(1).ok_or(TaskError::Exhausted)?;
-                continue;
+            match create_private(&directory) {
+                Ok(()) => {
+                    return Ok(Task {
+                        id: TaskId(id),
+                        directory,
+                    });
+                }
+                // A folder with this id and slug was left behind: the id is spent, take the next.
+                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
+                    id = bumped(id)?;
+                }
+                Err(source) => {
+                    return Err(TaskError::Create {
+                        path: directory,
+                        source,
+                    });
+                }
             }
-            if let Err(source) = fs::rename(&reserved, &directory) {
-                let _ = fs::remove_dir(&reserved);
-                return Err(TaskError::Create {
-                    path: directory,
-                    source,
-                });
-            }
-            return Ok(Task {
-                id: TaskId(id),
-                directory,
-            });
         }
     }
 
@@ -120,6 +127,37 @@ fn create_private(path: &Path) -> io::Result<()> {
     fs::DirBuilder::new().mode(0o700).create(path)
 }
 
+/// Refuses a path that is a symbolic link: a link is how a write leaves the project.
+fn reject_symlink(path: &Path) -> Result<(), TaskError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(TaskError::Symlink {
+            path: path.to_owned(),
+        }),
+        Ok(_) => Ok(()),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(TaskError::Inspect {
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
+/// `.dog-walker`, `tasks` and `ids` are as private as the task folders in them.
+fn private_dirs(path: &Path) -> Result<(), TaskError> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+        .map_err(|source| TaskError::Create {
+            path: path.to_owned(),
+            source,
+        })
+}
+
+fn bumped(id: u32) -> Result<u32, TaskError> {
+    id.checked_add(1).ok_or(TaskError::Exhausted)
+}
+
 /// The counter of a task folder name: digits, then either the end or a `-`.
 ///
 /// Bytes, not a lossy string: a folder name that is not UTF-8 simply has no id.
@@ -138,20 +176,22 @@ fn id_of(name: &OsStr) -> Option<u32> {
     std::str::from_utf8(bytes.get(..end)?).ok()?.parse().ok()
 }
 
-/// The next id: one past the highest folder in the tasks directory.
-fn next_id(tasks: &Path) -> Result<u32, TaskError> {
-    let entries = fs::read_dir(tasks).map_err(|source| TaskError::ReadDir {
-        path: tasks.to_owned(),
+/// The next id: one past the highest marker. Markers outlive the task folders, so ids are
+/// never reused.
+fn next_id(ids: &Path) -> Result<u32, TaskError> {
+    let entries = fs::read_dir(ids).map_err(|source| TaskError::ReadDir {
+        path: ids.to_owned(),
         source,
     })?;
     let mut next = 1;
     for entry in entries {
         let entry = entry.map_err(|source| TaskError::ReadDir {
-            path: tasks.to_owned(),
+            path: ids.to_owned(),
             source,
         })?;
         if let Some(id) = id_of(&entry.file_name()) {
-            next = next.max(id.saturating_add(1));
+            // `u32::MAX` is spent, not the next id: it cannot be handed out twice.
+            next = next.max(id.checked_add(1).ok_or(TaskError::Exhausted)?);
         }
     }
     Ok(next)
@@ -237,15 +277,56 @@ mod tests {
     }
 
     #[test]
-    fn the_next_id_follows_the_highest_folder() {
+    fn the_next_id_follows_the_highest_marker() {
         let root = project("next");
-        let tasks = root.join(".dog-walker").join("tasks");
-        fs::create_dir_all(&tasks).unwrap();
-        fs::create_dir_all(tasks.join("0004-fourth")).unwrap();
-        fs::create_dir_all(tasks.join("0009")).unwrap();
-        fs::create_dir_all(tasks.join("notes")).unwrap();
-        fs::create_dir_all(tasks.join("0010-not-a-task-1")).unwrap();
-        assert_eq!(next_id(&tasks).unwrap(), 11);
+        let ids = root.join(".dog-walker").join("ids");
+        fs::create_dir_all(&ids).unwrap();
+        for marker in ["0004", "0009", "notes", "0010-not-a-marker"] {
+            fs::File::create_new(ids.join(marker)).unwrap();
+        }
+        assert_eq!(next_id(&ids).unwrap(), 11);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The id allocation is atomic: many tasks started at once get distinct ids.
+    #[test]
+    fn concurrent_creations_never_share_an_id() {
+        let root = project("concurrent");
+        let threads = 16;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads));
+        let mut handles = Vec::new();
+        for number in 0..threads {
+            let root = root.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                Task::create(&root, &format!("brief {number}"))
+                    .unwrap()
+                    .id()
+                    .value()
+            }));
+        }
+        let mut ids: Vec<u32> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), threads, "distinct ids: {ids:?}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Deleting a task folder does not free its id.
+    #[test]
+    fn an_id_is_not_reused_after_its_folder_goes() {
+        let root = project("never-reused");
+        let first = Task::create(&root, "first").unwrap();
+        let second = Task::create(&root, "second").unwrap();
+        fs::remove_dir_all(second.directory()).unwrap();
+        let third = Task::create(&root, "third").unwrap();
+        assert_eq!(first.id().to_string(), "0001");
+        assert_eq!(second.id().to_string(), "0002");
+        assert_eq!(third.id().to_string(), "0003");
         fs::remove_dir_all(&root).unwrap();
     }
 }

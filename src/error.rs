@@ -52,6 +52,10 @@ pub enum TaskError {
     Create { path: PathBuf, source: io::Error },
     #[error("no task id left: the counter is exhausted")]
     Exhausted,
+    #[error("refusing to write through the symbolic link {}", path.display())]
+    Symlink { path: PathBuf },
+    #[error("cannot inspect {}: {source}", path.display())]
+    Inspect { path: PathBuf, source: io::Error },
 }
 
 /// Why the handover could not be written.

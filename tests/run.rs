@@ -17,17 +17,20 @@ use std::process::{Command, Output, Stdio};
 const FAKE_HARNESS: &str = r#"#!/usr/bin/env bash
 set -u
 mode=${1:-}
-prompt=${2:-}
+if [ "$#" -gt 0 ]; then prompt=${!#}; else prompt=""; fi
 result=${DOG_WALKER_RESULT_PATH:?}
 case $mode in
   result)
-    if read -r -t 1 line; then stdin="open: $line"; else stdin="closed"; fi
+    read -r -t 1 line
+    status=$?
+    if [ "$status" -eq 1 ]; then stdin="closed"; elif [ "$status" -eq 0 ]; then stdin="open: $line"; else stdin="timeout"; fi
     {
       printf 'prompt: %s\n' "$prompt"
       printf 'stdin: %s\n' "$stdin"
       printf 'task-dir: %s\n' "${DOG_WALKER_TASK_DIR:-}"
+      printf 'handover: %s\n' "${DOG_WALKER_HANDOVER_PATH:-}"
       printf 'model: %s\n' "${DOG_WALKER_MODEL:-}"
-      printf 'effort: %s\n' "${DOG_WALKER_EFFORT:-}"
+      printf 'effort: %s\n' "${DOG_WALKER_EFFORT:-<unset>}"
       printf 'profile: %s\n' "${DOG_WALKER_PROFILE:-}"
       printf 'task: %s\n' "${DOG_WALKER_TASK_ID:-}"
       printf 'cwd: %s\n' "$(pwd)"
@@ -41,11 +44,31 @@ case $mode in
     echo "the harness ran and wrote nothing"
     exit 3
     ;;
+  result-and-exit-3)
+    printf 'a result, but a bad exit\n' > "$result"
+    echo "finishing with 3"
+    exit 3
+    ;;
   empty-result)
     : > "$result"
     ;;
   bad-result)
     printf '\377\376' > "$result"
+    ;;
+  symlink-result)
+    printf 'a secret\n' > "$DOG_WALKER_TASK_DIR/../../secret.txt"
+    ln -s "$DOG_WALKER_TASK_DIR/../../secret.txt" "$result"
+    ;;
+  fifo-result)
+    mkfifo "$result"
+    ;;
+  plant-temp-link)
+    ln -s "$DOG_WALKER_TASK_DIR/../../victim.txt" "$DOG_WALKER_TASK_DIR/.handover.md.$PPID.tmp"
+    printf 'a result beside a planted link\n' > "$result"
+    ;;
+  stuck-handover)
+    printf 'a result\n' > "$result"
+    chmod 500 "$DOG_WALKER_TASK_DIR"
     ;;
   handover-at-start)
     { echo "handover-at-start:"; cat "$DOG_WALKER_TASK_DIR/handover.md"; } > "$result"
@@ -301,6 +324,54 @@ fn at1_the_model_and_effort_reach_the_harness() {
         )),
         "{handover}"
     );
+    assert!(
+        handover.contains(&format!(
+            "handover: {}",
+            fixture
+                .tasks()
+                .join("0001-do-the-thing")
+                .join("handover.md")
+                .display()
+        )),
+        "{handover}"
+    );
+    // AT6 (R5): it starts in the project directory, not wherever the config lives.
+    let project = fs::canonicalize(&fixture.project).unwrap();
+    assert!(
+        handover.contains(&format!("cwd: {}", project.display())),
+        "{handover}"
+    );
+}
+
+// AT1 (R1): a profile without an effort passes none.
+#[test]
+fn at1_a_profile_without_effort_passes_none() {
+    let fixture = Fixture::new("at1-no-effort", "result");
+    let script = fixture.dir.path().join("fake.sh");
+    let config = fixture.dir.path().join("no-effort.toml");
+    fs::write(
+        &config,
+        format!(
+            "[profiles.zeta]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n\n\
+             [profiles.alpha]\nharness = \"pi\"\nmodel = \"local/qwen\"\n\
+             command = [\"{}\", \"result\"]\n",
+            script.display()
+        ),
+    )
+    .unwrap();
+    let out = binary()
+        .arg("--config")
+        .arg(&config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        fixture.handover().contains("effort: <unset>"),
+        "{}",
+        fixture.handover()
+    );
 }
 
 // AT3 (R2): the main profile is refused unless `--allow-main` is given.
@@ -517,6 +588,114 @@ fn at24_a_run_works_without_network() {
     assert!(fixture.handover().contains("status = \"done\""));
 }
 
+// AT16 (R13): a harness that ends badly is a failure even when it left a result.
+#[test]
+fn at16_a_nonzero_exit_is_a_failure() {
+    let fixture = Fixture::new("at16-exit", "result-and-exit-3");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"failed\""), "{handover}");
+    assert!(
+        handover.contains("the harness ended with exit status: 3"),
+        "{handover}"
+    );
+    assert!(
+        handover.contains("a result, but a bad exit"),
+        "the real result is kept, not invented: {handover}"
+    );
+    assert!(
+        fixture.log().contains("finishing with 3"),
+        "{}",
+        fixture.log()
+    );
+}
+
+// AT16 (R13): a result that is a symbolic link is refused, not read through.
+#[test]
+fn at16_a_symlinked_result_is_not_read() {
+    let fixture = Fixture::new("at16-symlink", "symlink-result");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"failed\""), "{handover}");
+    assert!(
+        handover.contains("the result is not a regular file"),
+        "{handover}"
+    );
+    assert!(!handover.contains("a secret"), "{handover}");
+}
+
+// AT16 (R13): a result that is a pipe is refused without the run hanging on it.
+#[test]
+fn at16_a_fifo_result_is_not_read() {
+    let fixture = Fixture::new("at16-fifo", "fifo-result");
+    let mut child = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the run hung on a FIFO result"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(
+        fixture
+            .handover()
+            .contains("the result is not a regular file"),
+        "{}",
+        fixture.handover()
+    );
+}
+
+// R12: a link planted where the handover is written is not followed, and the victim is kept.
+#[test]
+fn at15_a_planted_temp_link_is_not_followed() {
+    let fixture = Fixture::new("at15-planted", "plant-temp-link");
+    fs::create_dir_all(fixture.tasks()).unwrap();
+    let victim = fixture.project.join("victim.txt");
+    fs::write(&victim, "keep me\n").unwrap();
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "keep me\n");
+    let handover = fixture
+        .tasks()
+        .join(fixture.only_task())
+        .join("handover.md");
+    let metadata = fs::symlink_metadata(&handover).unwrap();
+    assert!(
+        metadata.file_type().is_file(),
+        "the handover is a regular file, not a link"
+    );
+    assert!(fixture.handover().contains("status = \"done\""));
+}
+
+// R6: the path is on stdout even when the end state cannot be written.
+#[test]
+fn at7_the_path_comes_before_the_end_state() {
+    let fixture = Fixture::new("at7-stuck", "stuck-handover");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(printed_path(&out).ends_with("handover.md"));
+    assert!(stderr(&out).contains("handover"), "{}", stderr(&out));
+    // Give the fixture back the right to remove its directory.
+    let task = fixture.tasks().join(fixture.only_task());
+    fs::set_permissions(&task, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.
 fn sandbox_required(value: Option<std::ffi::OsString>) -> bool {
     value.is_some_and(|value| !value.is_empty())
@@ -524,6 +703,7 @@ fn sandbox_required(value: Option<std::ffi::OsString>) -> bool {
 
 /// The start of every sandbox test: true when `bwrap` works here, a loud skip when it does
 /// not, and a failure when the sandbox is required (CI sets `DOG_WALKER_REQUIRE_SANDBOX=1`).
+/// A copy of the helper in `tests/cli.rs`, because the two test binaries cannot share it.
 fn sandbox_available(test: &str) -> bool {
     let probe = Command::new("bwrap")
         .args(["--ro-bind", "/", "/", "--unshare-net", "true"])

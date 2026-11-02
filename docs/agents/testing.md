@@ -23,8 +23,9 @@ Sandbox tests use the real `bwrap`, since
 they check OS-level effects; they are skipped with a loud message when `bwrap`
 or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to any
 non-empty value, `0` included (CI sets `1`), in which case a missing sandbox fails them. Every sandbox
-test starts with the `sandbox_available` helper in `tests/cli.rs`; today that is
-`at24_works_without_network`. A skipped test still reports `ok`; its SKIPPED line is printed to stderr, which cargo
+test starts with the `sandbox_available` helper, copied in `tests/cli.rs` and `tests/run.rs`
+(the test binaries cannot share it); today the tests are `at24_works_without_network` and
+`at24_a_run_works_without_network`. A skipped test still reports `ok`; its SKIPPED line is printed to stderr, which cargo
 shows even for a passing test. Everything runs offline. Only the acceptance tests
 carry an AT id in the name, and a failing test prints the fake harness's output.
 

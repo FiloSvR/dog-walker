@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// The file-writing spellings of `WRITES`, which `handover` may use for its own document
 /// (`handover.rs`). Everything that reaches stdout or stderr stays in the `output` module.
-const FILE_WRITES: [&str; 1] = ["::write("];
+const FILE_WRITES: [&str; 1] = [".write_all("];
 
 /// Spellings of a write that only the `output` module may use, except for the file writes
 /// `handover` is allowed.

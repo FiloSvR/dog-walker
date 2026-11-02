@@ -4,6 +4,7 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, ExitStatus};
 
@@ -190,33 +191,38 @@ fn run_task(
     let handover_path = task.handover_path();
     let mut handover = Handover::new(&task.id(), &profile.name, &brief);
     handover.save(&handover_path)?;
-    output::line(stderr, &format!("dog-walker: task {} created", task.id()))?;
+    // The handover exists, so its path goes out now: whatever happens to the task from here,
+    // stdout holds it (R6). The log lines are best effort: a closed stderr is no reason to
+    // abandon a task.
+    output::path(stdout, &handover_path)?;
+    log(stderr, &format!("dog-walker: task {} created", task.id()));
     handover.start()?;
     handover.save(&handover_path)?;
-    output::line(
+    log(
         stderr,
         &format!(
             "dog-walker: task {} running on `{}`",
             task.id(),
             profile.name
         ),
-    )?;
+    );
     let (status, outcome) = match launch::launch(profile, &task, &project, &brief) {
-        Ok(ended) => match read_result(&task, ended) {
-            Ok(result) => (Status::Done, result),
-            Err(reason) => (Status::Failed, reason),
-        },
+        Ok(ended) => outcome(&task, ended),
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
     handover.end(status, &outcome)?;
     handover.save(&handover_path)?;
-    output::line(stderr, &format!("dog-walker: task {} {status}", task.id()))?;
-    output::path(stdout, &handover_path)?;
+    log(stderr, &format!("dog-walker: task {} {status}", task.id()));
     Ok(if status == Status::Done {
         exit::SUCCESS
     } else {
         exit::TASK_NOT_DONE
     })
+}
+
+/// One line of log on stderr, if it can be written.
+fn log(stderr: &mut dyn Write, line: &str) {
+    let _ = output::line(stderr, line);
 }
 
 /// The brief: the text given, `-` for stdin, or a file. Empty is an error.
@@ -242,20 +248,54 @@ fn brief(task: Option<&str>, file: Option<&Path>) -> Result<String, CliError> {
     Ok(text)
 }
 
+/// How the task ended: `done` only when the harness ended well and left a good result.
+fn outcome(task: &Task, ended: ExitStatus) -> (Status, String) {
+    match read_result(task) {
+        Ok(result) if ended.success() => (Status::Done, result),
+        Ok(result) => (
+            Status::Failed,
+            format!("The task failed: the harness ended with {ended}.\n\n{result}"),
+        ),
+        Err(reason) => (
+            Status::Failed,
+            format!("The task failed: {reason} (the harness ended with {ended})."),
+        ),
+    }
+}
+
 /// The harness's result, or why there is none. A missing, unreadable, empty or non-UTF-8
 /// `result.md` never becomes an invented result (R13).
-fn read_result(task: &Task, ended: ExitStatus) -> Result<String, String> {
-    let reason = |why: &str| format!("The task failed: {why}.");
-    match fs::read(task.result_path()) {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(text) if !text.trim().is_empty() => Ok(text),
-            Ok(_) => Err(reason("the harness left an empty result")),
-            Err(_) => Err(reason("the result is not valid UTF-8")),
-        },
+///
+/// The result must be a regular file: a symbolic link is a way out of the task folder, and a
+/// FIFO would block the read. The inode is compared with the one before opening, so a file
+/// swapped in between is refused rather than read.
+fn read_result(task: &Task) -> Result<String, String> {
+    let path = task.result_path();
+    let before = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
         Err(source) if source.kind() == io::ErrorKind::NotFound => {
-            Err(reason(&format!("the harness left no result (it {ended})")))
+            return Err("the harness left no result".to_owned());
         }
-        Err(source) => Err(reason(&format!("the result cannot be read ({source})"))),
+        Err(source) => return Err(format!("the result cannot be read ({source})")),
+    };
+    if !before.file_type().is_file() {
+        return Err("the result is not a regular file".to_owned());
+    }
+    let mut file =
+        fs::File::open(&path).map_err(|source| format!("the result cannot be read ({source})"))?;
+    let opened = file
+        .metadata()
+        .map_err(|source| format!("the result cannot be read ({source})"))?;
+    if !opened.is_file() || opened.dev() != before.dev() || opened.ino() != before.ino() {
+        return Err("the result changed while it was read".to_owned());
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|source| format!("the result cannot be read ({source})"))?;
+    match String::from_utf8(bytes) {
+        Ok(text) if !text.trim().is_empty() => Ok(text),
+        Ok(_) => Err("the harness left an empty result".to_owned()),
+        Err(_) => Err("the result is not valid UTF-8".to_owned()),
     }
 }
 

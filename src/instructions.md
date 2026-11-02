@@ -35,5 +35,5 @@ Whatever the exit code, stdout holds the handover path when a task was started.
 Each task has its own folder: `.dog-walker/tasks/<id>-<slug>/handover.md`. Its front matter
 holds the status; the brief is what you wrote; the Result section is what the secondary
 reports: what it did, the files it changed, what is open. Next to it, `result.md` is what the
-secondary wrote and `harness.log` is its raw output, kept when the run fails. Review the
+secondary wrote and `harness.log` is its raw output, kept even when the run fails. Review the
 changes yourself before you rely on them. The secondary cannot commit; you do.

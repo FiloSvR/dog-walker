@@ -8,6 +8,7 @@
 //! use.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -57,21 +58,37 @@ impl Handover {
 
     /// Writes the handover to `path` through a temporary file and a rename, so a reader never
     /// sees half a document.
+    ///
+    /// The temporary is opened with `create_new`: the task folder is where the harness writes,
+    /// and a file or a symlink planted at the temporary's name would otherwise redirect the
+    /// write outside the folder. A name already taken is unlinked once — unlinking removes a
+    /// link, never what it points at — and the file is created again.
     pub fn save(&self, path: &Path) -> Result<(), HandoverError> {
         let directory = path.parent().unwrap_or(Path::new("."));
         let mut temporary = PathBuf::from(directory);
         temporary.push(format!(
-            ".{}.tmp",
+            ".{}.{}.tmp",
             path.file_name()
                 .and_then(|name| name.to_str())
-                .unwrap_or("handover.md")
+                .unwrap_or("handover.md"),
+            std::process::id()
         ));
-        fs::write(&temporary, self.render())
-            .and_then(|()| fs::rename(&temporary, path))
-            .map_err(|source| HandoverError::Write {
-                path: path.to_owned(),
-                source,
-            })
+        let fail = |source: std::io::Error| HandoverError::Write {
+            path: path.to_owned(),
+            source,
+        };
+        let mut file = match create_new(&temporary) {
+            Ok(file) => file,
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                fs::remove_file(&temporary).map_err(fail)?;
+                create_new(&temporary).map_err(fail)?
+            }
+            Err(source) => return Err(fail(source)),
+        };
+        file.write_all(self.render().as_bytes()).map_err(fail)?;
+        file.sync_all().map_err(fail)?;
+        fs::rename(&temporary, path).map_err(fail)?;
+        Ok(())
     }
 
     /// The document as it is written to disk.
@@ -90,6 +107,11 @@ impl Handover {
             self.brief.trim_end()
         )
     }
+}
+
+/// Creates `path` for writing, failing if anything is there already, a symlink included.
+fn create_new(path: &Path) -> std::io::Result<fs::File> {
+    fs::File::create_new(path)
 }
 
 /// The front matter, as a reader parses it.
