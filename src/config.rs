@@ -181,7 +181,7 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
     check_text("model", &model).map_err(fail)?;
     if let Some(effort) = &raw.effort {
         check_text("effort", effort).map_err(fail)?;
-        if effort == "-" {
+        if effort.trim() == "-" {
             return Err(fail(
                 "`effort` cannot be `-`: `profiles` prints that for no effort".to_owned(),
             ));
@@ -213,8 +213,13 @@ fn check_text(field: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("`{field}` must not be empty"));
     }
-    if value.chars().any(char::is_control) {
-        return Err(format!("`{field}` must not contain control characters"));
+    if value
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+    {
+        return Err(format!(
+            "`{field}` must not contain control or line-separator characters"
+        ));
     }
     Ok(())
 }

@@ -224,7 +224,7 @@ fn at24_no_networking_crates_in_lockfile() {
     let deny: toml::Table =
         toml::from_str(&fs::read_to_string(format!("{root}/deny.toml")).unwrap()).unwrap();
     let banned = deny["bans"]["deny"].as_array().unwrap();
-    assert!(banned.len() >= 9, "deny.toml lost its ban list");
+    assert!(banned.len() >= 9, "deny.toml lost part of its ban list");
     for entry in banned {
         let name = entry["name"].as_str().unwrap();
         assert!(
@@ -288,6 +288,17 @@ fn at2_unprintable_or_reserved_values_are_rejected() {
             "effort",
         ),
         ("dash-effort", "model = \"m\"\neffort = \"-\"", "effort"),
+        (
+            "padded-dash-effort",
+            "model = \"m\"\neffort = \" - \"",
+            "effort",
+        ),
+        ("line-separator-in-model", "model = \"a\\u2028b\"", "model"),
+        (
+            "paragraph-separator-in-effort",
+            "model = \"m\"\neffort = \"x\\u2029y\"",
+            "effort",
+        ),
     ] {
         let out = run_with_config(case, &one_profile(extra), &["profiles"]);
         assert_eq!(out.status.code(), Some(2), "{case}: {}", stderr(&out));

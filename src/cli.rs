@@ -43,6 +43,14 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    ExitCode::from(exit_code(args, stdout, stderr))
+}
+
+fn exit_code<I, T>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> u8
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(error) => {
@@ -53,19 +61,18 @@ where
             } else {
                 (stdout, exit::SUCCESS)
             };
-            let code = if output::text(target, &text).is_ok() {
+            return if output::text(target, &text).is_ok() {
                 code
             } else {
                 exit::ERROR
             };
-            return ExitCode::from(code);
         }
     };
     match execute(&cli, stdout) {
-        Ok(()) => ExitCode::from(exit::SUCCESS),
+        Ok(()) => exit::SUCCESS,
         Err(error) => {
             let _ = output::line(stderr, &format!("dog-walker: {error}"));
-            ExitCode::from(exit::ERROR)
+            exit::ERROR
         }
     }
 }
@@ -97,4 +104,55 @@ fn execute(cli: &Cli, stdout: &mut dyn Write) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+
+    /// A stream that refuses every write, like a full disk.
+    struct Full;
+
+    impl Write for Full {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("full"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn help_that_cannot_be_written_exits_2() {
+        assert_eq!(
+            exit_code(["dog-walker", "--help"], &mut Full, &mut io::sink()),
+            exit::ERROR
+        );
+    }
+
+    #[test]
+    fn a_usage_error_that_cannot_be_written_exits_2() {
+        assert_eq!(
+            exit_code(["dog-walker", "bogus"], &mut io::sink(), &mut Full),
+            exit::ERROR
+        );
+    }
+
+    #[test]
+    fn a_result_that_cannot_be_written_exits_2() {
+        assert_eq!(
+            exit_code(["dog-walker", "instructions"], &mut Full, &mut io::sink()),
+            exit::ERROR
+        );
+    }
+
+    #[test]
+    fn help_that_can_be_written_exits_0() {
+        assert_eq!(
+            exit_code(["dog-walker", "--help"], &mut io::sink(), &mut Full),
+            exit::SUCCESS
+        );
+    }
 }
