@@ -16,7 +16,7 @@ use crate::error::{CliError, ConfigError, Error};
 use crate::handover::{self, Handover};
 use crate::launch::{self, End};
 use crate::output::{self, exit};
-use crate::sandbox::{Plan, Policy, Request};
+use crate::sandbox::{self, Plan, Policy, Request};
 use crate::status::Status;
 use crate::task::{Task, TaskId};
 
@@ -251,7 +251,10 @@ fn run_task(
     plan.check(profile, &project)?;
     let task = Task::create(&project, &brief)?;
     let handover_path = task.handover_path();
-    let mut handover = Handover::new(&task.id(), &profile.name, &brief)
+    // What the record keeps is redacted: the harness sees the brief as written (R18).
+    let secrets = plan.policy().secret_values();
+    let recorded = sandbox::redact(&brief, &secrets);
+    let mut handover = Handover::new(&task.id(), &profile.name, &recorded)
         .with_sandbox(&plan.policy().render(plan.sandboxed()));
     save(&handover, &task)?;
     // The handover exists, so its path goes out now: whatever happens to the task from here,
@@ -279,7 +282,7 @@ fn run_task(
         Ok(End::Cancelled) => (Status::Cancelled, "The task was cancelled.".to_owned()),
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
-    handover.end(status, &outcome)?;
+    handover.end(status, &sandbox::redact(&outcome, &secrets))?;
     save(&handover, &task)?;
     // Only now that the end state is on disk: a cancel that arrives later reads it and backs
     // off, and one that arrived earlier finds nothing to do.

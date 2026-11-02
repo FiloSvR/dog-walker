@@ -9,7 +9,8 @@
 //! that group, not only the process dog-walker spawned.
 
 use std::ffi::OsString;
-use std::fs::File;
+use std::fs::{self, File};
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, ExitStatus, Stdio};
@@ -122,7 +123,42 @@ pub fn launch(
         }
     };
     drop(child.stdin.take());
-    wait(&mut child, &task.directory().join(CANCEL_FILE), timeout)
+    let end = wait(&mut child, &task.directory().join(CANCEL_FILE), timeout);
+    // The harness may have printed a secret; the log outlives the run (R18).
+    redact_log(task, &plan.policy().secret_values())?;
+    end
+}
+
+/// Rewrites `harness.log` with the configured secret values replaced. A log with no secret is
+/// left exactly as it is, and the rewrite goes through a temporary file in the task folder, so
+/// a reader sees either the old log or the redacted one.
+fn redact_log(task: &Task, secrets: &[String]) -> Result<(), LaunchError> {
+    if secrets.is_empty() {
+        return Ok(());
+    }
+    let path = task.log_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(LaunchError::Log { path, source }),
+    };
+    let redacted = crate::sandbox::redact(&text, secrets);
+    if redacted == text {
+        return Ok(());
+    }
+    let temp = path.with_file_name(format!("harness.log.{}.tmp", std::process::id()));
+    let written = (|| {
+        let mut file = fs::File::create_new(&temp)?;
+        file.write_all(redacted.as_bytes())?;
+        fs::rename(&temp, &path)
+    })();
+    match written {
+        Ok(()) => Ok(()),
+        Err(source) => {
+            let _ = fs::remove_file(&temp);
+            Err(LaunchError::Log { path, source })
+        }
+    }
 }
 
 /// What the harness learns about its task, in the environment.
@@ -319,6 +355,7 @@ mod tests {
             read_only_dirs: Vec::new(),
             writable_dirs: Vec::new(),
             env: Vec::new(),
+            secrets: Vec::new(),
         }
     }
 

@@ -23,7 +23,8 @@ ends. It prints the path of the handover on stdout and logs on stderr. Running t
 profile itself needs `--allow-main`.
 
 The task runs in a sandbox: it sees the project, the system's programs, and only the
-directories and variables its profile lists (`read_only_dirs`, `writable_dirs`, `env`). A
+directories and variables its profile lists (`read_only_dirs`, `writable_dirs`, `env`), and the
+variables named in `secrets` are redacted from the handover and the log. A
 profile can cut the network (`network = false`) and make `.git` writable
 (`git = "writable"`). If bwrap is missing, `run` refuses; `--unsandboxed` runs without it and
 the handover says so.

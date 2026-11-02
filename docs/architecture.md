@@ -72,7 +72,9 @@ It reads, from the environment:
 Adapters (#10) will build that command line from the profile; until then a profile needs a
 `command` to run, and `run` says so before it creates a task. Inside the sandbox the
 environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the
-sandbox it is inherited, and the handover says so. Redacting secret values is #8.
+sandbox it is inherited, and the handover says so. A profile can also name the variables whose
+values are secrets (`secrets`): those values are replaced with `[redacted]` in the handover and
+in `harness.log` once the run ends (R18), and the handover lists the names, never the values.
 
 Checks: `at1_*`, `at6_*`, `at7_*`, `at16_a_harness_that_cannot_start_fails_the_task`. A
 harness that ends with a non-zero status is a failed task, even when it left a result
@@ -100,8 +102,8 @@ git mode, the directories and the variable names (R20). A denial is an `EROFS` o
 say which rule fired, and dog-walker does not invent one.
 
 Two limits are deliberate. The `DOG_WALKER_*` and allowlisted variable values travel in
-bwrap's argument list, which is world-readable on the host; moving secret values off it is
-#8's. And a `.git` file (a `git worktree` or a submodule) points at a gitdir outside the
+bwrap's argument list, which is world-readable on the host; a secret's value is redacted from
+the files dog-walker keeps, but not from its own command line while it runs. And a `.git` file (a `git worktree` or a submodule) points at a gitdir outside the
 project, which is not mounted, so git commands fail inside; a worktree can list its gitdir as
 a read-only directory.
 

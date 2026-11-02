@@ -52,6 +52,8 @@ pub struct Policy {
     pub read_only_dirs: Vec<PathBuf>,
     pub writable_dirs: Vec<PathBuf>,
     pub env: Vec<String>,
+    /// Variables whose values are redacted from the handover and the log (R18).
+    pub secrets: Vec<String>,
 }
 
 impl Policy {
@@ -70,6 +72,7 @@ impl Policy {
             read_only_dirs,
             writable_dirs,
             env: profile.env.clone(),
+            secrets: profile.secrets.clone(),
         })
     }
 
@@ -81,7 +84,18 @@ impl Policy {
             read_only_dirs: profile.read_only_dirs.clone(),
             writable_dirs: profile.writable_dirs.clone(),
             env: profile.env.clone(),
+            secrets: profile.secrets.clone(),
         }
+    }
+
+    /// The values to redact: what the configured secret names hold in this environment.
+    pub fn secret_values(&self) -> Vec<String> {
+        self.secrets
+            .iter()
+            .filter_map(env::var_os)
+            .map(|value| value.to_string_lossy().into_owned())
+            .filter(|value| !value.is_empty())
+            .collect()
     }
 
     /// What the handover says about the run, one bullet per line.
@@ -104,7 +118,7 @@ impl Policy {
         if !names.iter().any(|name| name == "PATH") {
             names.push("PATH".to_owned());
         }
-        format!(
+        let mut text = format!(
             "- tool: bwrap\n- network: {}\n- git: {}\n- writable dirs: {}\n- read-only dirs: {}\n- environment: {}",
             if self.network { "on" } else { "off" },
             if self.git_writable {
@@ -115,7 +129,13 @@ impl Policy {
             list(&self.writable_dirs),
             list(&self.read_only_dirs),
             names.join(", "),
-        )
+        );
+        if !self.secrets.is_empty() {
+            text.push_str("\n- secrets: ");
+            text.push_str(&self.secrets.join(", "));
+            text.push_str(" (redacted)");
+        }
+        text
     }
 }
 
@@ -194,6 +214,7 @@ impl Request {
             read_only_dirs,
             writable_dirs,
             env,
+            secrets: parent.secrets.clone(),
         })
     }
 
@@ -349,6 +370,16 @@ fn shown(dir: &Path, field: &'static str, origin: &str) -> Result<PathBuf, Overr
         field,
         detail,
     })
+}
+
+/// `text` with every configured secret value replaced: the harness may print one, and the
+/// handover and the log outlive the run (R18).
+pub fn redact(text: &str, secrets: &[String]) -> String {
+    let mut redacted = text.to_owned();
+    for secret in secrets {
+        redacted = redacted.replace(secret.as_str(), "[redacted]");
+    }
+    redacted
 }
 
 /// What a run does about the sandbox.
@@ -702,6 +733,7 @@ mod tests {
             read_only_dirs: Vec::new(),
             writable_dirs: Vec::new(),
             env: Vec::new(),
+            secrets: Vec::new(),
         }
     }
 
@@ -726,6 +758,7 @@ mod tests {
             read_only_dirs: vec![PathBuf::from("/shared")],
             writable_dirs: vec![PathBuf::from("/cache")],
             env: vec!["HOME".to_owned()],
+            secrets: vec!["HOME".to_owned()],
         };
         // Absent fields inherit.
         let project = Path::new("/work/project");
@@ -814,6 +847,7 @@ mod tests {
             read_only_dirs: Vec::new(),
             writable_dirs: Vec::new(),
             env: Vec::new(),
+            secrets: Vec::new(),
         };
         let add = Request {
             read_only_dirs: Some(vec![protected.clone()]),

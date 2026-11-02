@@ -108,6 +108,14 @@ case $mode in
       printf 'push: %s\n' "$(status git push "$DOG_WALKER_TASK_DIR/../../../../outside.git" HEAD:refs/heads/main)"
     } > "$result"
     ;;
+  secret)
+    {
+      printf 'saw: %s\n' "${PROFILE_SECRET:+yes}"
+      printf 'value: %s\n' "${PROFILE_SECRET:-<unset>}"
+      printf 'plain: %s\n' "${TEST_VALUE:-<unset>}"
+    } > "$result"
+    printf 'a log line with %s\n' "${PROFILE_SECRET:-<unset>}" >&2
+    ;;
   env-report)
     printf 'host: %s\n' "${HOST_SECRET:-<unset>}" > "$result"
     ;;
@@ -1428,6 +1436,42 @@ fn at17_a_timeout_inside_the_sandbox_cleans_up() {
         no_process_runs(&fixture.dir.path().join("fake.sh")),
         "the sandbox tree is still running"
     );
+}
+
+// AT23 (R18): a configured secret value is absent from the handover and the log, and the
+// harness still gets it.
+#[test]
+fn at23_a_configured_secret_is_redacted() {
+    if !sandbox_available("at23_a_configured_secret_is_redacted") {
+        return;
+    }
+    let fixture = Fixture::with_policy(
+        "at23",
+        "secret",
+        "env = [\"PROFILE_SECRET\", \"TEST_VALUE\"]\nsecrets = [\"PROFILE_SECRET\"]",
+    );
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("PROFILE_SECRET", "topsecret-123")
+        .env("TEST_VALUE", "hello")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("saw: yes"), "{handover}");
+    assert!(handover.contains("plain: hello"), "{handover}");
+    assert!(handover.contains("value: [redacted]"), "{handover}");
+    assert!(!handover.contains("topsecret-123"), "{handover}");
+    assert!(
+        handover.contains("- secrets: PROFILE_SECRET (redacted)"),
+        "{handover}"
+    );
+    let log = fixture.log();
+    assert!(log.contains("[redacted]"), "{log}");
+    assert!(!log.contains("topsecret-123"), "{log}");
 }
 
 /// Whether no process on the host is running `path`: inside a PID namespace the harness sees
