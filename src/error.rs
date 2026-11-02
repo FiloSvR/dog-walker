@@ -1,9 +1,12 @@
 //! Error types. Each module owns its enum; only `cli` turns them into exit codes.
 
+use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 
-/// Why a config file could not be loaded.
+use crate::status::Status;
+
+/// Why a config file could not be loaded, or a profile could not be chosen from it.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("no config file: pass --config, or set XDG_CONFIG_HOME or HOME")]
@@ -23,6 +26,76 @@ pub enum ConfigError {
     NoMain,
     #[error("exactly one profile must be main, but these are: {names}")]
     ManyMain { names: String },
+    #[error("no profile named `{name}`: `profiles` lists them")]
+    UnknownProfile { name: String },
+    #[error("`{profile}` is the main profile: pass --allow-main to delegate to it")]
+    MainProfile { profile: String },
+    #[error("profile `{profile}` has no `command` to run (adapters land in #10)")]
+    NoCommand { profile: String },
+}
+
+/// Why a task could not change status.
+#[derive(Debug, thiserror::Error)]
+pub enum StatusError {
+    #[error("a task in state `{from}` cannot become `{to}`")]
+    Transition { from: Status, to: Status },
+    #[error("`{to}` is not an end state")]
+    NotAnEnd { to: Status },
+}
+
+/// Why a task folder could not be created or read.
+#[derive(Debug, thiserror::Error)]
+pub enum TaskError {
+    #[error("cannot read the tasks directory {}: {source}", path.display())]
+    ReadDir { path: PathBuf, source: io::Error },
+    #[error("cannot create the task folder {}: {source}", path.display())]
+    Create { path: PathBuf, source: io::Error },
+    #[error("no task id left: the counter is exhausted")]
+    Exhausted,
+    #[error("refusing to write through the symbolic link {}", path.display())]
+    Symlink { path: PathBuf },
+    #[error("the task folder {} was moved or replaced: refusing to touch it", path.display())]
+    Moved { path: PathBuf },
+    #[error("cannot inspect {}: {source}", path.display())]
+    Inspect { path: PathBuf, source: io::Error },
+}
+
+/// Why the handover could not be written.
+#[derive(Debug, thiserror::Error)]
+pub enum HandoverError {
+    #[error("cannot write the handover {}: {source}", path.display())]
+    Write { path: PathBuf, source: io::Error },
+}
+
+/// Why the harness could not be started or waited for.
+#[derive(Debug, thiserror::Error)]
+pub enum LaunchError {
+    #[error(transparent)]
+    Task(#[from] TaskError),
+    #[error("profile `{profile}` has no `command` to run")]
+    NoCommand { profile: String },
+    #[error("cannot open the log {}: {source}", path.display())]
+    Log { path: PathBuf, source: io::Error },
+    #[error("cannot start the harness `{}`: {source}", program.to_string_lossy())]
+    Spawn {
+        program: OsString,
+        source: io::Error,
+    },
+    #[error("cannot wait for the harness: {source}")]
+    Wait { source: io::Error },
+}
+
+/// Why the command line could not produce a task.
+#[derive(Debug, thiserror::Error)]
+pub enum CliError {
+    #[error("the task is empty: pass the brief as text, with --file, or `-` for stdin")]
+    EmptyTask,
+    #[error("cannot read the task from {}: {source}", path.display())]
+    TaskFile { path: PathBuf, source: io::Error },
+    #[error("cannot read the task from stdin: {source}")]
+    Stdin { source: io::Error },
+    #[error("cannot find the project directory: {source}")]
+    Project { source: io::Error },
 }
 
 /// Everything that can make a command fail.
@@ -32,4 +105,12 @@ pub enum Error {
     Config(#[from] ConfigError),
     #[error("cannot write output: {0}")]
     Output(#[from] io::Error),
+    #[error(transparent)]
+    Status(#[from] StatusError),
+    #[error(transparent)]
+    Task(#[from] TaskError),
+    #[error(transparent)]
+    Handover(#[from] HandoverError),
+    #[error(transparent)]
+    Cli(#[from] CliError),
 }

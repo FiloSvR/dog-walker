@@ -2,15 +2,21 @@
 //! This is the only place that turns an error into a message and an exit code.
 
 use std::ffi::OsString;
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::fs;
+use std::io::{self, Read, Write};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::process::{ExitCode, ExitStatus};
 
 use clap::{Parser, Subcommand};
 
 use crate::config::{self, Config};
-use crate::error::{ConfigError, Error};
+use crate::error::{CliError, ConfigError, Error};
+use crate::handover::Handover;
+use crate::launch;
 use crate::output::{self, exit};
+use crate::status::Status;
+use crate::task::Task;
 
 const INSTRUCTIONS: &str = include_str!("instructions.md");
 
@@ -35,6 +41,20 @@ enum Command {
     Profiles,
     /// Print guidance for the main harness on delegating a task
     Instructions,
+    /// Run a task on a secondary harness and wait for it
+    Run {
+        /// The profile to run the task on
+        profile: String,
+        /// The brief, or `-` to read it from stdin
+        #[arg(value_name = "TASK", conflicts_with = "file")]
+        task: Option<String>,
+        /// Read the brief from a file
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+        /// Allow delegating to the main profile
+        #[arg(long)]
+        allow_main: bool,
+    },
 }
 
 /// Runs dog-walker with `args` (including the program name) and returns the exit code.
@@ -68,8 +88,8 @@ where
             };
         }
     };
-    match execute(&cli, stdout) {
-        Ok(()) => exit::SUCCESS,
+    match execute(&cli, stdout, stderr) {
+        Ok(code) => code,
         Err(error) => {
             let _ = output::line(stderr, &format!("dog-walker: {error}"));
             exit::ERROR
@@ -77,33 +97,214 @@ where
     }
 }
 
-fn execute(cli: &Cli, stdout: &mut dyn Write) -> Result<(), Error> {
-    match cli.command {
-        Command::Instructions => output::line(stdout, INSTRUCTIONS.trim_end())?,
-        Command::Profiles => {
-            let path = match &cli.config {
-                Some(path) => path.clone(),
-                None => config::default_path(
-                    std::env::var_os("XDG_CONFIG_HOME"),
-                    std::env::var_os("HOME"),
-                )
-                .ok_or(ConfigError::NoConfigPath)?,
-            };
-            let config = Config::load(&path)?;
-            for profile in config.profiles() {
-                let role = if profile.main { "main" } else { "secondary" };
-                let row = format!(
-                    "{}\t{}\t{}\t{}\t{role}",
-                    profile.name,
-                    profile.harness,
-                    profile.model,
-                    profile.effort.as_deref().unwrap_or("-"),
-                );
-                output::line(stdout, &row)?;
-            }
+fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<u8, Error> {
+    match &cli.command {
+        Command::Instructions => {
+            output::line(stdout, INSTRUCTIONS.trim_end())?;
+            Ok(exit::SUCCESS)
         }
+        Command::Profiles => {
+            let config = load(cli)?;
+            list(&config, stdout)?;
+            Ok(exit::SUCCESS)
+        }
+        Command::Run {
+            profile,
+            task,
+            file,
+            allow_main,
+        } => run_task(
+            cli,
+            profile,
+            task.as_deref(),
+            file.as_deref(),
+            *allow_main,
+            stdout,
+            stderr,
+        ),
+    }
+}
+
+/// Reads the config the command line points at.
+fn load(cli: &Cli) -> Result<Config, ConfigError> {
+    let path = match &cli.config {
+        Some(path) => path.clone(),
+        None => config::default_path(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )
+        .ok_or(ConfigError::NoConfigPath)?,
+    };
+    Config::load(&path)
+}
+
+/// One row per profile: name, harness, model, effort, role, separated by tabs.
+fn list(config: &Config, stdout: &mut dyn Write) -> io::Result<()> {
+    for profile in config.profiles() {
+        let role = if profile.main { "main" } else { "secondary" };
+        let row = format!(
+            "{}\t{}\t{}\t{}\t{role}",
+            profile.name,
+            profile.harness,
+            profile.model,
+            profile.effort.as_deref().unwrap_or("-"),
+        );
+        output::line(stdout, &row)?;
     }
     Ok(())
+}
+
+/// Creates the task, runs the harness, finalizes the handover and prints its path. The exit
+/// code is 0 only when the task ended `done`.
+fn run_task(
+    cli: &Cli,
+    profile_name: &str,
+    task: Option<&str>,
+    file: Option<&Path>,
+    allow_main: bool,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<u8, Error> {
+    let config = load(cli)?;
+    let profile = config
+        .profiles()
+        .iter()
+        .find(|profile| profile.name.as_str() == profile_name)
+        .ok_or_else(|| ConfigError::UnknownProfile {
+            name: profile_name.to_owned(),
+        })?;
+    if profile.main && !allow_main {
+        return Err(ConfigError::MainProfile {
+            profile: profile.name.to_string(),
+        }
+        .into());
+    }
+    if profile.command.is_none() {
+        return Err(ConfigError::NoCommand {
+            profile: profile.name.to_string(),
+        }
+        .into());
+    }
+    let brief = brief(task, file)?;
+    let project = std::env::current_dir().map_err(|source| CliError::Project { source })?;
+    let task = Task::create(&project, &brief)?;
+    let handover_path = task.handover_path();
+    let mut handover = Handover::new(&task.id(), &profile.name, &brief);
+    save(&handover, &task)?;
+    // The handover exists, so its path goes out now: whatever happens to the task from here,
+    // stdout holds it (R6). The log lines are best effort: a closed stderr is no reason to
+    // abandon a task.
+    output::path(stdout, &handover_path)?;
+    log(stderr, &format!("dog-walker: task {} created", task.id()));
+    handover.start()?;
+    save(&handover, &task)?;
+    log(
+        stderr,
+        &format!(
+            "dog-walker: task {} running on `{}`",
+            task.id(),
+            profile.name
+        ),
+    );
+    let (status, outcome) = match launch::launch(profile, &task, &project, &brief) {
+        Ok(ended) => outcome(&task, ended),
+        Err(error) => (Status::Failed, format!("The task failed: {error}.")),
+    };
+    handover.end(status, &outcome)?;
+    save(&handover, &task)?;
+    log(stderr, &format!("dog-walker: task {} {status}", task.id()));
+    Ok(if status == Status::Done {
+        exit::SUCCESS
+    } else {
+        exit::TASK_NOT_DONE
+    })
+}
+
+/// Saves the handover, once the task folder is still the one that was created.
+fn save(handover: &Handover, task: &Task) -> Result<(), Error> {
+    task.verify()?;
+    handover.save(&task.handover_path())?;
+    Ok(())
+}
+
+/// One line of log on stderr, if it can be written.
+fn log(stderr: &mut dyn Write, line: &str) {
+    let _ = output::line(stderr, line);
+}
+
+/// The brief: the text given, `-` for stdin, or a file. Empty is an error.
+fn brief(task: Option<&str>, file: Option<&Path>) -> Result<String, CliError> {
+    let text = match (task, file) {
+        (Some("-"), _) => {
+            let mut text = String::new();
+            io::stdin()
+                .read_to_string(&mut text)
+                .map_err(|source| CliError::Stdin { source })?;
+            text
+        }
+        (Some(text), _) => text.to_owned(),
+        (None, Some(path)) => fs::read_to_string(path).map_err(|source| CliError::TaskFile {
+            path: path.to_owned(),
+            source,
+        })?,
+        (None, None) => return Err(CliError::EmptyTask),
+    };
+    if text.trim().is_empty() {
+        return Err(CliError::EmptyTask);
+    }
+    Ok(text)
+}
+
+/// How the task ended: `done` only when the harness ended well and left a good result.
+fn outcome(task: &Task, ended: ExitStatus) -> (Status, String) {
+    match read_result(task) {
+        Ok(result) if ended.success() => (Status::Done, result),
+        Ok(result) => (
+            Status::Failed,
+            format!("The task failed: the harness ended with {ended}.\n\n{result}"),
+        ),
+        Err(reason) => (
+            Status::Failed,
+            format!("The task failed: {reason} (the harness ended with {ended})."),
+        ),
+    }
+}
+
+/// The harness's result, or why there is none. A missing, unreadable, empty or non-UTF-8
+/// `result.md` never becomes an invented result (R13).
+///
+/// The result must be a regular file: a symbolic link is a way out of the task folder, and a
+/// FIFO would block the read. The inode is compared with the one before opening, so a file
+/// swapped in between is refused rather than read.
+fn read_result(task: &Task) -> Result<String, String> {
+    task.verify().map_err(|error| error.to_string())?;
+    let path = task.result_path();
+    let before = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Err("the harness left no result".to_owned());
+        }
+        Err(source) => return Err(format!("the result cannot be read ({source})")),
+    };
+    if !before.file_type().is_file() {
+        return Err("the result is not a regular file".to_owned());
+    }
+    let mut file =
+        fs::File::open(&path).map_err(|source| format!("the result cannot be read ({source})"))?;
+    let opened = file
+        .metadata()
+        .map_err(|source| format!("the result cannot be read ({source})"))?;
+    if !opened.is_file() || opened.dev() != before.dev() || opened.ino() != before.ino() {
+        return Err("the result changed while it was read".to_owned());
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|source| format!("the result cannot be read ({source})"))?;
+    match String::from_utf8(bytes) {
+        Ok(text) if !text.trim().is_empty() => Ok(text),
+        Ok(_) => Err("the harness left an empty result".to_owned()),
+        Err(_) => Err("the result is not valid UTF-8".to_owned()),
+    }
 }
 
 #[cfg(test)]

@@ -15,15 +15,18 @@ State, in plain words, what the secondary needs and nothing else:
 ## 2. Run it
 
     dog-walker run <profile> "<the brief>"
+    dog-walker run <profile> --file brief.md
+    dog-walker run <profile> -              # the brief on stdin
 
 `dog-walker profiles` lists the profiles, the main one first. `run` blocks until the task
-ends. It prints the path of the handover on stdout and logs on stderr.
+ends. It prints the path of the handover on stdout and logs on stderr. Running the main
+profile itself needs `--allow-main`.
 
 ## 3. Read the exit code
 
 - exit code 0: the task ended `done`.
 - exit code 1: the task ended `failed`, `timed-out` or `cancelled`.
-- exit code 2: bad usage or a config error; no task ran.
+- exit code 2: bad usage, a config error, or a failure after the task was created.
 
 Whatever the exit code, stdout holds the handover path when a task was started.
 
@@ -31,5 +34,6 @@ Whatever the exit code, stdout holds the handover path when a task was started.
 
 Each task has its own folder: `.dog-walker/tasks/<id>-<slug>/handover.md`. Its front matter
 holds the status; the brief is what you wrote; the Result section is what the secondary
-reports: what it did, the files it changed, what is open. Review the changes yourself before
-you rely on them. The secondary cannot commit; you do.
+reports: what it did, the files it changed, what is open. Next to it, `result.md` is what the
+secondary wrote and `harness.log` is its raw output, kept even when the run fails. Review the
+changes yourself before you rely on them. The secondary cannot commit; you do.

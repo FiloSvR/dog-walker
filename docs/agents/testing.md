@@ -13,14 +13,19 @@ Read by `change`, `architect` and `plan`.
 `review-guard` step, which lives inline in `.github/workflows/review-guard.yml`, against
 a stub `gh` and the real `jq`.
 
-The fake harness is a small test-only binary with scripted behaviours (write a
-result, write a malformed one, hang, read its environment, attempt a forbidden
-write, try the network, call `run`). Sandbox tests use the real `bwrap`, since
+The fake harness is a small script that a test writes and a profile's `command` points at:
+its first argument is the behaviour (write a result, write a malformed one, do nothing, edit
+the handover) and the brief arrives as its last argument, so `tests/run.rs` exercises the
+same launcher a user configures. It is not part of the binary, and there are no test-only
+variants in it.
+
+Sandbox tests use the real `bwrap`, since
 they check OS-level effects; they are skipped with a loud message when `bwrap`
 or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to any
 non-empty value, `0` included (CI sets `1`), in which case a missing sandbox fails them. Every sandbox
-test starts with the `sandbox_available` helper in `tests/cli.rs`; today that is
-`at24_works_without_network`. A skipped test still reports `ok`; its SKIPPED line is printed to stderr, which cargo
+test starts with the `sandbox_available` helper, copied in `tests/cli.rs` and `tests/run.rs`
+(the test binaries cannot share it); today the tests are `at24_works_without_network` and
+`at24_a_run_works_without_network`. A skipped test still reports `ok`; its SKIPPED line is printed to stderr, which cargo
 shows even for a passing test. Everything runs offline. Only the acceptance tests
 carry an AT id in the name, and a failing test prints the fake harness's output.
 
