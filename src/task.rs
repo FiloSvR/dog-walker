@@ -11,6 +11,7 @@ use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use crate::error::TaskError;
@@ -44,6 +45,10 @@ impl fmt::Display for TaskId {
 pub struct Task {
     id: TaskId,
     directory: PathBuf,
+    /// The device and inode the folder was created with, so a later write can tell that the
+    /// path still leads to that folder and not to a link the harness left behind.
+    device: u64,
+    inode: u64,
 }
 
 impl Task {
@@ -60,7 +65,7 @@ impl Task {
         private_dirs(&tasks)?;
         private_dirs(&ids)?;
         let slug = slug(brief);
-        let mut id = next_id(&ids)?;
+        let mut id = next_id(&tasks, &ids)?;
         loop {
             // The marker is the reservation and it stays: created exactly once, it makes the
             // id unique among concurrent runs, and it keeps the counter from going back when
@@ -82,9 +87,16 @@ impl Task {
             let directory = tasks.join(format!("{id:04}-{slug}"));
             match create_private(&directory) {
                 Ok(()) => {
+                    let metadata =
+                        fs::symlink_metadata(&directory).map_err(|source| TaskError::Inspect {
+                            path: directory.clone(),
+                            source,
+                        })?;
                     return Ok(Task {
                         id: TaskId(id),
                         directory,
+                        device: metadata.dev(),
+                        inode: metadata.ino(),
                     });
                 }
                 // A folder with this id and slug was left behind: the id is spent, take the next.
@@ -99,6 +111,32 @@ impl Task {
                 }
             }
         }
+    }
+
+    /// Checks that the folder is still the one this task created: not renamed away, not
+    /// replaced by a link. The harness writes in the task folder, and a later write must not
+    /// follow it anywhere else.
+    pub fn verify(&self) -> Result<(), TaskError> {
+        let metadata = match fs::symlink_metadata(&self.directory) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                return Err(TaskError::Moved {
+                    path: self.directory.clone(),
+                });
+            }
+            Err(source) => {
+                return Err(TaskError::Inspect {
+                    path: self.directory.clone(),
+                    source,
+                });
+            }
+        };
+        if !metadata.is_dir() || metadata.dev() != self.device || metadata.ino() != self.inode {
+            return Err(TaskError::Moved {
+                path: self.directory.clone(),
+            });
+        }
+        Ok(())
     }
 
     pub fn id(&self) -> TaskId {
@@ -176,25 +214,37 @@ fn id_of(name: &OsStr) -> Option<u32> {
     std::str::from_utf8(bytes.get(..end)?).ok()?.parse().ok()
 }
 
-/// The next id: one past the highest marker. Markers outlive the task folders, so ids are
-/// never reused.
-fn next_id(ids: &Path) -> Result<u32, TaskError> {
-    let entries = fs::read_dir(ids).map_err(|source| TaskError::ReadDir {
-        path: ids.to_owned(),
-        source,
-    })?;
-    let mut next = 1;
+/// The next id: one past the highest marker or task folder. Markers outlive the folders, so
+/// ids are not reused; folders are counted too, for a tree made before the markers existed or
+/// a task folder copied in by hand.
+fn next_id(tasks: &Path, ids: &Path) -> Result<u32, TaskError> {
+    let next = highest(tasks, 1)?;
+    highest(ids, next)
+}
+
+/// One past the highest id in `directory`.
+fn highest(directory: &Path, mut high: u32) -> Result<u32, TaskError> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(high),
+        Err(source) => {
+            return Err(TaskError::ReadDir {
+                path: directory.to_owned(),
+                source,
+            });
+        }
+    };
     for entry in entries {
         let entry = entry.map_err(|source| TaskError::ReadDir {
-            path: ids.to_owned(),
+            path: directory.to_owned(),
             source,
         })?;
         if let Some(id) = id_of(&entry.file_name()) {
             // `u32::MAX` is spent, not the next id: it cannot be handed out twice.
-            next = next.max(id.checked_add(1).ok_or(TaskError::Exhausted)?);
+            high = high.max(id.checked_add(1).ok_or(TaskError::Exhausted)?);
         }
     }
-    Ok(next)
+    Ok(high)
 }
 
 /// A folder-name-safe summary of the brief: lowercase ASCII, words joined by `-`.
@@ -279,12 +329,68 @@ mod tests {
     #[test]
     fn the_next_id_follows_the_highest_marker() {
         let root = project("next");
+        let tasks = root.join(".dog-walker").join("tasks");
         let ids = root.join(".dog-walker").join("ids");
+        fs::create_dir_all(&tasks).unwrap();
         fs::create_dir_all(&ids).unwrap();
         for marker in ["0004", "0009", "notes", "0010-not-a-marker"] {
             fs::File::create_new(ids.join(marker)).unwrap();
         }
-        assert_eq!(next_id(&ids).unwrap(), 11);
+        assert_eq!(next_id(&tasks, &ids).unwrap(), 11);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A task folder left without a marker (an older tree, a copy) still counts.
+    #[test]
+    fn a_folder_without_a_marker_still_counts() {
+        let root = project("folder-next");
+        let tasks = root.join(".dog-walker").join("tasks");
+        let ids = root.join(".dog-walker").join("ids");
+        fs::create_dir_all(tasks.join("0007-legacy")).unwrap();
+        fs::create_dir_all(&ids).unwrap();
+        assert_eq!(next_id(&tasks, &ids).unwrap(), 8);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The counter ends at `u32::MAX` rather than handing that id out twice.
+    #[test]
+    fn the_last_id_is_spent() {
+        let root = project("exhausted");
+        let tasks = root.join(".dog-walker").join("tasks");
+        let ids = root.join(".dog-walker").join("ids");
+        fs::create_dir_all(&tasks).unwrap();
+        fs::create_dir_all(&ids).unwrap();
+        fs::File::create_new(ids.join("4294967295")).unwrap();
+        assert!(matches!(
+            Task::create(&root, "a brief"),
+            Err(TaskError::Exhausted)
+        ));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A `.dog-walker` that is a link is refused, not followed.
+    #[test]
+    fn a_symlinked_tasks_root_is_refused() {
+        let root = project("symlinked");
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join(".dog-walker")).unwrap();
+        assert!(matches!(
+            Task::create(&root, "a brief"),
+            Err(TaskError::Symlink { .. })
+        ));
+        assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A folder moved after it was created is refused: the handover must not follow it.
+    #[test]
+    fn a_task_folder_that_moved_is_refused() {
+        let root = project("moved");
+        let task = Task::create(&root, "a brief").unwrap();
+        task.verify().unwrap();
+        fs::rename(task.directory(), root.join("elsewhere")).unwrap();
+        assert!(matches!(task.verify(), Err(TaskError::Moved { .. })));
         fs::remove_dir_all(&root).unwrap();
     }
 

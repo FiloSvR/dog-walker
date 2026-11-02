@@ -26,7 +26,7 @@ profile itself needs `--allow-main`.
 
 - exit code 0: the task ended `done`.
 - exit code 1: the task ended `failed`, `timed-out` or `cancelled`.
-- exit code 2: bad usage or a config error; no task ran.
+- exit code 2: bad usage, a config error, or a failure after the task was created.
 
 Whatever the exit code, stdout holds the handover path when a task was started.
 

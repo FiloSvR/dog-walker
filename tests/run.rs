@@ -63,8 +63,14 @@ case $mode in
     mkfifo "$result"
     ;;
   plant-temp-link)
-    ln -s "$DOG_WALKER_TASK_DIR/../../victim.txt" "$DOG_WALKER_TASK_DIR/.handover.md.$PPID.tmp"
+    ln -s "$DOG_WALKER_TASK_DIR/../../../victim.txt" "$DOG_WALKER_TASK_DIR/.handover.md.tmp"
+    ln -s "$DOG_WALKER_TASK_DIR/../../../victim.txt" "$DOG_WALKER_TASK_DIR/.handover.md.$PPID.tmp"
     printf 'a result beside a planted link\n' > "$result"
+    ;;
+  move-task-dir)
+    printf 'a result outside\n' > "$result"
+    mv "$DOG_WALKER_TASK_DIR" "$DOG_WALKER_TASK_DIR.moved"
+    ln -s "$DOG_WALKER_TASK_DIR.moved" "$DOG_WALKER_TASK_DIR"
     ;;
   stuck-handover)
     printf 'a result\n' > "$result"
@@ -435,13 +441,9 @@ fn at14_the_handover_is_complete_before_the_harness_starts() {
     let handover = fixture.handover();
     assert!(
         handover.contains(
-            "handover-at-start:\n+++\nid = \"0001\"\nprofile = \"alpha\"\nstatus = \"running\"\n+++"
+            "handover-at-start:\n+++\nid = \"0001\"\nprofile = \"alpha\"\nstatus = \"running\"\n+++\n\n# Task 0001\n\n## Brief\n\nKeep it small.\n"
         ),
-        "{handover}"
-    );
-    assert!(
-        handover.contains("## Brief\n\nKeep it small."),
-        "{handover}"
+        "the snapshot holds the brief before the harness runs: {handover}"
     );
 }
 
@@ -644,10 +646,10 @@ fn at16_a_fifo_result_is_not_read() {
         if child.try_wait().unwrap().is_some() {
             break;
         }
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(10),
-            "the run hung on a FIFO result"
-        );
+        if started.elapsed() >= std::time::Duration::from_secs(10) {
+            let _ = child.kill();
+            panic!("the run hung on a FIFO result");
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     let out = child.wait_with_output().unwrap();
@@ -694,6 +696,28 @@ fn at7_the_path_comes_before_the_end_state() {
     // Give the fixture back the right to remove its directory.
     let task = fixture.tasks().join(fixture.only_task());
     fs::set_permissions(&task, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+// R12: a task folder the harness moved away and replaced with a link is not written through.
+#[test]
+fn at15_a_moved_task_folder_is_refused() {
+    let fixture = Fixture::new("at15-moved", "move-task-dir");
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("moved or replaced"),
+        "{}",
+        stderr(&out)
+    );
+    let moved = fixture
+        .tasks()
+        .join("0001-do-the-thing.moved")
+        .join("handover.md");
+    let text = fs::read_to_string(moved).unwrap();
+    assert!(
+        text.contains("status = \"running\""),
+        "the end state was not written through the link: {text}"
+    );
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.

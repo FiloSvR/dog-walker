@@ -45,7 +45,9 @@ pub fn launch(
     let (program, arguments) = argv.split_first().ok_or_else(|| LaunchError::NoCommand {
         profile: profile.name.to_string(),
     })?;
-    let log = File::create(task.log_path()).map_err(|source| LaunchError::Log {
+    // `create_new`: the task folder is new, and a link planted at the log's name would send
+    // the harness's output wherever it points.
+    let log = File::create_new(task.log_path()).map_err(|source| LaunchError::Log {
         path: task.log_path(),
         source,
     })?;

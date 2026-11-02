@@ -190,14 +190,14 @@ fn run_task(
     let task = Task::create(&project, &brief)?;
     let handover_path = task.handover_path();
     let mut handover = Handover::new(&task.id(), &profile.name, &brief);
-    handover.save(&handover_path)?;
+    save(&handover, &task)?;
     // The handover exists, so its path goes out now: whatever happens to the task from here,
     // stdout holds it (R6). The log lines are best effort: a closed stderr is no reason to
     // abandon a task.
     output::path(stdout, &handover_path)?;
     log(stderr, &format!("dog-walker: task {} created", task.id()));
     handover.start()?;
-    handover.save(&handover_path)?;
+    save(&handover, &task)?;
     log(
         stderr,
         &format!(
@@ -211,13 +211,20 @@ fn run_task(
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
     handover.end(status, &outcome)?;
-    handover.save(&handover_path)?;
+    save(&handover, &task)?;
     log(stderr, &format!("dog-walker: task {} {status}", task.id()));
     Ok(if status == Status::Done {
         exit::SUCCESS
     } else {
         exit::TASK_NOT_DONE
     })
+}
+
+/// Saves the handover, once the task folder is still the one that was created.
+fn save(handover: &Handover, task: &Task) -> Result<(), Error> {
+    task.verify()?;
+    handover.save(&task.handover_path())?;
+    Ok(())
 }
 
 /// One line of log on stderr, if it can be written.
@@ -270,6 +277,7 @@ fn outcome(task: &Task, ended: ExitStatus) -> (Status, String) {
 /// FIFO would block the read. The inode is compared with the one before opening, so a file
 /// swapped in between is refused rather than read.
 fn read_result(task: &Task) -> Result<String, String> {
+    task.verify().map_err(|error| error.to_string())?;
     let path = task.result_path();
     let before = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,

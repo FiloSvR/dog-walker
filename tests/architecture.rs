@@ -126,7 +126,8 @@ fn the_tripwire_sees_each_spelling() {
     );
 }
 
-// Only the top-level `main.rs` and `output.rs` are exempt, not files of the same name deeper in.
+// Only the top-level `main.rs`, `output.rs` and `handover.rs` are exempt, not files of the same
+// name deeper in.
 #[test]
 fn the_exemptions_are_exact_paths() {
     let src = Path::new("/repo/src");
@@ -135,6 +136,16 @@ fn the_exemptions_are_exact_paths() {
         src,
         Path::new("/repo/src/output.rs"),
         "output.rs"
+    ));
+    assert!(is_top_level(
+        src,
+        Path::new("/repo/src/handover.rs"),
+        "handover.rs"
+    ));
+    assert!(!is_top_level(
+        src,
+        Path::new("/repo/src/sub/handover.rs"),
+        "handover.rs"
     ));
     assert!(!is_top_level(
         src,

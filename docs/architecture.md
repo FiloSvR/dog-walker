@@ -46,9 +46,10 @@ with a reason, the raw log kept and no invented result (R13).
 An id is allocated by creating a marker file for it under `.dog-walker/ids/` with `create_new`,
 retrying with the next id when the name is taken: the marker is atomic, so two tasks started at
 once cannot take the same counter, and it is never removed, so deleting a task folder does not
-free its id for reuse. The task folder is then created as `<id>-<slug>`, mode 0700, and so are
-`.dog-walker`, `tasks` and `ids`. A symbolic link where any of them belongs is refused, so a
-previous run cannot make the next one write outside the project.
+free its id for reuse. The task folder is then created as `<id>-<slug>`, mode 0700, and `.dog-walker`, `tasks` and
+`ids` are created 0700 too (an existing one is left as it is). A symbolic link where any of
+them belongs is refused, and after the run the task folder is checked to still be the one that
+was created, so a folder the harness moves away or replaces with a link is not written through.
 
 Invariant: only dog-walker writes the status (R12), and it rewrites the whole document from
 what it holds in memory, so a harness that edits the status or the brief loses the edit:

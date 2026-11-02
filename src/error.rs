@@ -54,6 +54,8 @@ pub enum TaskError {
     Exhausted,
     #[error("refusing to write through the symbolic link {}", path.display())]
     Symlink { path: PathBuf },
+    #[error("the task folder {} was moved or replaced: refusing to touch it", path.display())]
+    Moved { path: PathBuf },
     #[error("cannot inspect {}: {source}", path.display())]
     Inspect { path: PathBuf, source: io::Error },
 }
