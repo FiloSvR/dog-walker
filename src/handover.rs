@@ -1,0 +1,175 @@
+//! The handover document: TOML front matter, the brief dog-walker was given and the result
+//! the harness wrote (R11, R12). The whole file is rendered from what dog-walker holds in
+//! memory, so a status or brief edited by the harness is overwritten with the real one.
+//!
+//! The front matter is TOML between `+++` lines (D5). It is rendered by hand: every value that
+//! reaches it is restricted (the id is digits, the profile name is `ProfileName`, the status
+//! comes from `Status`), and `front_matter_is_toml` parses it back with the same crate readers
+//! use.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+
+use crate::config::ProfileName;
+use crate::error::HandoverError;
+use crate::status::Status;
+use crate::task::TaskId;
+
+pub struct Handover {
+    id: TaskId,
+    profile: ProfileName,
+    status: Status,
+    brief: String,
+    /// What goes under the Result heading: the harness's result, or why the task failed.
+    outcome: Option<String>,
+}
+
+impl Handover {
+    /// A handover for a task that has just been created and has not started.
+    pub fn new(id: &TaskId, profile: &ProfileName, brief: &str) -> Handover {
+        Handover {
+            id: *id,
+            profile: profile.clone(),
+            status: Status::Created,
+            brief: brief.to_owned(),
+            outcome: None,
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        self.status
+    }
+
+    /// `created` to `running`.
+    pub fn start(&mut self) -> Result<(), crate::error::StatusError> {
+        self.status = self.status.start()?;
+        Ok(())
+    }
+
+    /// `running` to `to`, with `outcome` under the Result heading.
+    pub fn end(&mut self, to: Status, outcome: &str) -> Result<(), crate::error::StatusError> {
+        self.status = self.status.end(to)?;
+        self.outcome = Some(outcome.to_owned());
+        Ok(())
+    }
+
+    /// Writes the handover to `path` through a temporary file and a rename, so a reader never
+    /// sees half a document.
+    pub fn save(&self, path: &Path) -> Result<(), HandoverError> {
+        let directory = path.parent().unwrap_or(Path::new("."));
+        let mut temporary = PathBuf::from(directory);
+        temporary.push(format!(
+            ".{}.tmp",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("handover.md")
+        ));
+        fs::write(&temporary, self.render())
+            .and_then(|()| fs::rename(&temporary, path))
+            .map_err(|source| HandoverError::Write {
+                path: path.to_owned(),
+                source,
+            })
+    }
+
+    /// The document as it is written to disk.
+    pub fn render(&self) -> String {
+        let front = format!(
+            "+++\nid = \"{}\"\nprofile = \"{}\"\nstatus = \"{}\"\n+++\n",
+            self.id, self.profile, self.status
+        );
+        let result = match &self.outcome {
+            Some(outcome) => format!("\n## Result\n\n{}\n", outcome.trim_end()),
+            None => String::new(),
+        };
+        format!(
+            "{front}\n# Task {}\n\n## Brief\n\n{}\n{result}",
+            self.id,
+            self.brief.trim_end()
+        )
+    }
+}
+
+/// The front matter, as a reader parses it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrontMatter {
+    pub id: String,
+    pub profile: String,
+    pub status: String,
+}
+
+/// Reads the front matter of `text`; `None` when there is none or it is not TOML.
+pub fn front_matter(text: &str) -> Option<FrontMatter> {
+    let rest = text.strip_prefix("+++\n")?;
+    let end = rest.find("\n+++\n")?;
+    toml::from_str(rest.get(..end)?).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn handover() -> Handover {
+        let id = TaskId::parse("0007").unwrap();
+        let profile = ProfileName::parse("alpha").unwrap();
+        Handover::new(&id, &profile, "Fix the bug.\nKeep it small.")
+    }
+
+    #[test]
+    fn a_new_handover_is_created_and_has_no_result() {
+        let text = handover().render();
+        assert!(
+            text.starts_with(
+                "+++\nid = \"0007\"\nprofile = \"alpha\"\nstatus = \"created\"\n+++\n"
+            )
+        );
+        assert!(text.contains("## Brief\n\nFix the bug.\nKeep it small.\n"));
+        assert!(!text.contains("## Result"));
+    }
+
+    #[test]
+    fn a_finished_handover_has_its_result() {
+        let mut handover = handover();
+        handover.start().unwrap();
+        handover.end(Status::Done, "Changed one file.").unwrap();
+        let text = handover.render();
+        assert!(text.contains("status = \"done\""));
+        assert!(text.contains("## Result\n\nChanged one file.\n"));
+    }
+
+    #[test]
+    fn front_matter_is_toml() {
+        let mut handover = handover();
+        handover.start().unwrap();
+        let parsed = front_matter(&handover.render()).unwrap();
+        assert_eq!(parsed.id, "0007");
+        assert_eq!(parsed.profile, "alpha");
+        assert_eq!(parsed.status, "running");
+    }
+
+    #[test]
+    fn a_document_without_front_matter_has_none() {
+        assert!(front_matter("# just a file\n").is_none());
+        assert!(front_matter("+++\nnot toml\n+++\n").is_none());
+    }
+
+    #[test]
+    fn the_handover_is_written_atomically() {
+        let root = std::env::temp_dir().join(format!("dog-walker-handover-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("handover.md");
+        handover().save(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("status = \"created\""));
+        assert_eq!(
+            fs::read_dir(&root).unwrap().count(),
+            1,
+            "the temporary file is gone"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+}
