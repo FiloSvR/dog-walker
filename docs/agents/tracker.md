@@ -23,8 +23,9 @@ Read by `plan`, `change` and `review`.
   lands first as `.github/workflows/review-guard-target.yml`, next to the old `pull_request`
   one and under its own concurrency group (groups are shared across workflows, so sharing the
   name would let the two cancel each other); a second pull request deletes the old file,
-  renames the new one to `review-guard.yml`, gives it the `review-guard-<n>` group back, and
-  updates the paths in `tests/review_guard.rs` and `docs/agents/testing.md`. In between, every
+  renames the new one to `review-guard.yml`, gives it the `review-guard-<n>` group back, drops
+  the rollout comments in the workflow and the tracker, and updates the paths in
+  `tests/review_guard.rs` and `docs/agents/testing.md`. In between, every
   pull request reports the check twice and the old run still executes the pull request's copy
   of the workflow, so the hardening is complete only when the second step lands: merge it
   straight away, and merge nothing else in the window that the guard is meant to stop.
