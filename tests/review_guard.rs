@@ -1,4 +1,4 @@
-//! The `review-guard` step of `.github/workflows/review-guard-target.yml`, run against a stub
+//! The `review-guard` step of `.github/workflows/review-guard.yml`, run against a stub
 //! `gh` (#23). The step is inline in the workflow because the workflow runs from `main` and must
 //! not check out the pull request, so there is no script file to run: this test extracts the
 //! `run:` block and executes it, which is how the fail-closed paths are checked without GitHub.
@@ -15,7 +15,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const WORKFLOW: &str = ".github/workflows/review-guard-target.yml";
+const WORKFLOW: &str = ".github/workflows/review-guard.yml";
 
 /// A `gh` stand-in: `STUB_STATUS` is its exit code and `STUB_BODY` its response, on which the
 /// `--jq` filter the guard passed is applied.
@@ -163,6 +163,16 @@ fn the_workflow_keeps_the_shape_the_guard_relies_on() {
         !lines()
             .any(|line| line.starts_with("pull_request:") || line.starts_with("pull_request :")),
         "also runs on pull_request, and would run the pull request's copy: {text}"
+    );
+    // The label events are what let the check go red and green again without a push.
+    assert!(
+        lines().any(|line| line == "types: [opened, reopened, synchronize, labeled, unlabeled]"),
+        "the trigger types changed, and a label change may no longer start a run: {text}"
+    );
+    // The job's name is the ruleset's required context.
+    assert!(
+        lines().any(|line| line == "review-guard:"),
+        "the job is not named review-guard, and the required context is gone: {text}"
     );
     let permissions: Vec<&str> = text
         .lines()

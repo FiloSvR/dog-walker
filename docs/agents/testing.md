@@ -10,7 +10,7 @@ Read by `change`, `architect` and `plan`.
 | `tests/` | acceptance | the compiled binary run against a fake harness; one test per AT in `docs/requirements.md` |
 
 `tests/review_guard.rs` is another exception, like `tests/architecture.rs`: it runs the
-`review-guard` step, which lives inline in `.github/workflows/review-guard-target.yml`, against
+`review-guard` step, which lives inline in `.github/workflows/review-guard.yml`, against
 a stub `gh` and the real `jq`.
 
 The fake harness is a small test-only binary with scripted behaviours (write a

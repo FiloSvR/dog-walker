@@ -18,17 +18,17 @@ Read by `plan`, `change` and `review`.
   `check` and `test` stay on `pull_request`: they verify the pull request's code, so they have
   to run it, and a pull request that edits them is caught by the high-risk rule in
   `docs/agents/review.md`, not by the check (#23 decided this).
-  Rollout (#23): two steps, because the ruleset requires the check by name and a pull request
-  that replaced its own guard would report nothing at all. The `pull_request_target` workflow
-  lands first as `.github/workflows/review-guard-target.yml`, next to the old `pull_request`
-  one and under its own concurrency group (groups are shared across workflows, so sharing the
-  name would let the two cancel each other); a second pull request deletes the old file,
-  renames the new one to `review-guard.yml`, gives it the `review-guard-<n>` group back, drops
-  the rollout comments in the workflow and the tracker, and updates the paths in
-  `tests/review_guard.rs` and `docs/agents/testing.md`. In between, every
-  pull request reports the check twice and the old run still executes the pull request's copy
-  of the workflow, so the hardening is complete only when the second step lands: merge it
-  straight away, and merge nothing else in the window that the guard is meant to stop.
+  How it got here (#23): two pull requests, because the ruleset requires the check by name and
+  a pull request that replaced its own guard would have reported nothing at all. #24 added the
+  `pull_request_target` workflow next to the old `pull_request` one, under a concurrency group
+  of its own (groups are shared across workflows, so sharing the name would have let the two
+  cancel each other); #26 deleted the old file and gave the new one its name and group back.
+  While both were on `main`, an unchanged pull request reported the check twice, and #25, a
+  throwaway pull request that replaced the guard with one that always passes, read BLOCKED with
+  `needs/review` on: the `main`-sourced run was red and the pull request's own copy green, so
+  the green copy could not cover the red run. GitHub warns that the same job name in two
+  workflows makes status checks ambiguous and can block merges; which run decides is not
+  documented, and #26 ended the window.
   Required CI contexts: `check`, `test` and `review-guard`, required by the repository
   ruleset on `main` (strict: a pull request must be up to date; no bypass actors). The ruleset
   is the owner's; agents do not change it.
@@ -41,11 +41,11 @@ Read by `plan`, `change` and `review`.
   (only fork pull requests are forced read-only). The high-risk review in
   `docs/agents/review.md` is what stands behind those. Requiring pull requests in the ruleset
   is the owner's decision.
-  Queued runs: observed on #24, with the guard that still ran on `pull_request`. Green with the
-  label off, then `needs/review` added: `mergeStateStatus` stayed CLEAN for the couple of
-  seconds before GitHub created the new run, and was BLOCKED from the moment it appeared as
-  queued, through in-progress, until it finished red. A queued run does not leave a stale green
-  check; the green window is only the moment before the run exists. Owner rule: merge only
-  after `review-guard` has finished on the current labels.
+  Queued runs: observed on #24 (then on `pull_request`) and on #26 (on `pull_request_target`).
+  Green with the label off, then `needs/review` added: `mergeStateStatus` stayed CLEAN for the
+  second or two before GitHub created the new run, and was BLOCKED from the moment a run
+  appeared as queued, through in-progress, until it finished red. A queued run does not leave a
+  stale green check; the green window is only the moment before the run exists. Owner rule:
+  merge only after `review-guard` has finished on the current labels.
 - Board columns: the ones in `plan`.
 - Merge authority: only the owner.
