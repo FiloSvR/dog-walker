@@ -13,8 +13,11 @@ The fake harness is a small test-only binary with scripted behaviours (write a
 result, write a malformed one, hang, read its environment, attempt a forbidden
 write, try the network, call `run`). Sandbox tests use the real `bwrap`, since
 they check OS-level effects; they are skipped with a loud message when `bwrap`
-or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to a
-non-empty value (CI sets it), in which case a missing sandbox fails them. Everything runs offline. The AT id is in the
+or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to any
+non-empty value, `0` included (CI sets `1`), in which case a missing sandbox fails them. Every sandbox
+test starts with the `sandbox_available` helper in `tests/cli.rs`; today that is
+`at24_works_without_network`. A skipped test still reports `ok`; its SKIPPED line shows with
+`--nocapture`. Everything runs offline. The AT id is in the
 test name, and a failing test prints the fake harness's output.
 
 ## Commands

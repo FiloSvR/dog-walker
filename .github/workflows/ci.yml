@@ -11,8 +11,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # A newer push cancels an older run on a pull request, never a run on main.
+  # On main every commit has its own group, so no run is replaced; elsewhere a branch has one
+  # group and a newer push cancels an older run.
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  # Never cancel a run on main.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
