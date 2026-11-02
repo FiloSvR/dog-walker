@@ -21,6 +21,7 @@ test name, and a failing test prints the fake harness's output.
 - One test file or folder: `cargo test --test <name>`, or `cargo test <filter>`. Never the whole suite; CI is the gate.
 - Check (format, lint, dependency rules): `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo deny check`.
 - Format fix: `cargo fmt`.
+- Tools: `cargo install --locked cargo-deny`. Building any crate needs a C linker (`gcc`).
 
 ## Dependencies
 

@@ -20,7 +20,7 @@ Profiles in a config file (harness, model, thinking effort, sandbox, timeout), o
 
 **Configuration**
 - R1 Config defines harness profiles: harness (Pi, Claude Code, dsh, Codex), model, thinking effort, sandbox policy, timeout.
-- R2 Exactly one profile is main; the others are secondary. `run` rejects the main profile as a target unless `--allow-main` is given; `list` shows the main profile first.
+- R2 Exactly one profile is main; the others are secondary. `run` rejects the main profile as a target unless `--allow-main` is given; `profiles` lists them, the main profile first.
 - R3 Config is user-owned. A project config or a task may only tighten the sandbox, never loosen it.
 - R4 Each harness sits behind an adapter; adding one touches nothing else. ACP is allowed later, not used in v1.
 
