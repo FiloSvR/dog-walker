@@ -39,3 +39,6 @@ Kinds that need a second, independent review, on top of the default list:
 - anything that builds or changes the sandbox arguments (mounts, namespaces, environment);
 - anything that handles secrets, redaction or environment passing;
 - anything that changes the handover's ownership or write path.
+- anything under `.github/workflows/` and any change to the repository ruleset: a pull request
+  runs the workflow files it carries, so it can change the checks that gate it. The second
+  review is always owed, whatever the first rated.
