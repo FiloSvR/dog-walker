@@ -331,7 +331,7 @@ mod tests {
             &task,
             &root,
             "the brief",
-            Duration::from_secs(1),
+            Duration::from_secs(2),
         )
         .unwrap();
         assert!(matches!(ended, End::TimedOut), "{ended:?}");
@@ -349,8 +349,15 @@ mod tests {
         let task = Task::create(&root, "a brief").unwrap();
         let command = script(&root, "hang.sh", HANGING);
         let marker = task.directory().join(CANCEL_FILE);
+        let pids = task.directory().join("pids");
         let canceller = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(300));
+            // Wait for the script to have started and written its pids, so the check below has
+            // something to see, then ask it to stop.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !pids.exists() {
+                assert!(Instant::now() < deadline, "the script did not start");
+                thread::sleep(Duration::from_millis(20));
+            }
             File::create(marker).unwrap();
         });
         let ended = launch(

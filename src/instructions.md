@@ -22,9 +22,11 @@ State, in plain words, what the secondary needs and nothing else:
 ends. It prints the path of the handover on stdout and logs on stderr. Running the main
 profile itself needs `--allow-main`.
 
-A task is stopped when its profile's `timeout_minutes` passes (30 minutes by default), or
-sooner with `dog-walker cancel <id>` from another shell. Either way the harness and the
-processes it started are killed, and the handover says `timed-out` or `cancelled`.
+A task is stopped when its profile's `timeout_minutes` passes (30 minutes by default; it
+takes a fraction of a minute, so `0.5` is 30 seconds), or sooner with
+`dog-walker cancel <id>` from another shell in the project directory. Either way the harness
+and the processes in its process group are killed, and the handover says `timed-out` or
+`cancelled`.
 
 ## 3. Read the exit code
 

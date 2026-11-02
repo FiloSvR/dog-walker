@@ -2,9 +2,9 @@
 //! the exit contract. They run the compiled binary against a fake harness: a small script the
 //! profile's `command` points at, which behaves as its first argument says.
 
-// Why: clippy.toml exempts `#[test]` functions from the unwrap denial, but not the helper
-// functions of an integration-test file. A failing helper should fail the test.
-#![allow(clippy::unwrap_used)]
+// Why: clippy.toml exempts `#[test]` functions from the unwrap and panic denials, but not the
+// helper functions of an integration-test file. A failing helper should fail the test.
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 use std::fs;
 use std::io::Write as _;
@@ -243,6 +243,22 @@ fn spawn_run(fixture: &Fixture, args: &[&str]) -> std::process::Child {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap()
+}
+
+/// Waits for a spawned run, killing it if it outlives `limit`: a broken timeout or cancel
+/// should fail the test, not hang it.
+fn wait_with_deadline(mut child: std::process::Child, limit: Duration) -> Output {
+    let started = Instant::now();
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return child.wait_with_output().unwrap();
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            panic!("the run did not end within {limit:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn binary() -> Command {
@@ -786,7 +802,8 @@ fn at15_a_moved_task_folder_is_refused() {
 fn at17_a_timeout_kills_the_tree_and_ends_timed_out() {
     let fixture = Fixture::with_timeout("at17", "hang", Some(0.03));
     let started = Instant::now();
-    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    let child = spawn_run(&fixture, &["run", "alpha", "Do the thing."]);
+    let out = wait_with_deadline(child, Duration::from_secs(15));
     assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
     assert!(
         started.elapsed() >= Duration::from_millis(1500),
@@ -794,13 +811,18 @@ fn at17_a_timeout_kills_the_tree_and_ends_timed_out() {
         started.elapsed()
     );
     assert!(
-        started.elapsed() < Duration::from_secs(20),
-        "the default was not used: {:?}",
+        started.elapsed() < Duration::from_secs(5),
+        "the profile's 0.03 minutes, not the default: {:?}",
         started.elapsed()
     );
+    assert!(printed_path(&out).ends_with("handover.md"));
     let handover = fixture.handover();
     assert!(handover.contains("status = \"timed-out\""), "{handover}");
-    assert!(handover.contains("The task timed out after"), "{handover}");
+    // The handover text comes from the same timeout, so it pins the 1.8 seconds.
+    assert!(
+        handover.contains("The task timed out after 1.8 seconds."),
+        "{handover}"
+    );
     fixture.assert_tree_gone();
 }
 
@@ -815,12 +837,29 @@ fn at18_ctrl_c_kills_the_tree_and_ends_cancelled() {
         .status()
         .unwrap();
     assert!(killed.success());
-    let out = child.wait_with_output().unwrap();
+    let out = wait_with_deadline(child, Duration::from_secs(15));
     assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
     assert!(handover.contains("status = \"cancelled\""), "{handover}");
-    assert!(handover.contains("The task was cancelled"), "{handover}");
+    assert!(handover.contains("The task was cancelled."), "{handover}");
     assert!(printed_path(&out).ends_with("handover.md"));
+    fixture.assert_tree_gone();
+}
+
+// AT18 (R14): a TERM to the runner cancels too.
+#[test]
+fn at18_a_term_to_the_runner_cancels() {
+    let fixture = Fixture::new("at18-term", "hang");
+    let child = spawn_run(&fixture, &["run", "alpha", "Do the thing."]);
+    fixture.wait_for_pids();
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let out = wait_with_deadline(child, Duration::from_secs(15));
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(fixture.handover().contains("status = \"cancelled\""));
     fixture.assert_tree_gone();
 }
 
@@ -837,9 +876,16 @@ fn at18_cancel_from_another_shell_kills_the_tree() {
         "{}",
         stdout(&out)
     );
-    let out = child.wait_with_output().unwrap();
+    let out = wait_with_deadline(child, Duration::from_secs(15));
     assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
-    assert!(fixture.handover().contains("status = \"cancelled\""));
+    assert!(printed_path(&out).ends_with("handover.md"));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"cancelled\""), "{handover}");
+    assert!(handover.contains("The task was cancelled."), "{handover}");
+    assert!(
+        !fixture.task_dir().join(".cancel").exists(),
+        "the runner removes the marker"
+    );
     fixture.assert_tree_gone();
 }
 

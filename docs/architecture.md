@@ -80,12 +80,14 @@ exists, so a failure to write the end state still leaves it on stdout
 
 ## Stopping a task
 
-The harness leads a process group of its own, so a stop takes everything it started. `run`
+The harness leads a process group of its own, so a stop takes the processes in that group. `run`
 waits by polling the child and ends the tree when the profile's timeout passes (30 minutes by
-default, `timeout_minutes` in the profile), when Ctrl-C or a TERM interrupts the runner, or
-when `cancel <id>` writes `.cancel` into the task folder. The group gets TERM, two seconds,
-then KILL; the handover is closed as `timed-out` or `cancelled`, and the runner removes the
-marker. `cancel` reads the handover first and writes nothing to a task that has already ended.
+default; `timeout_minutes` takes a fraction of a minute), when Ctrl-C or a TERM interrupts the
+runner, or when `cancel <id>` writes `.cancel` into the task folder. The group gets TERM, the
+runner waits for the leader up to two seconds, then the group gets KILL. The handover is closed
+as `timed-out` or `cancelled`, and the runner removes the marker once the end state is on disk.
+`cancel`, run in the project directory, reads the handover first and writes nothing to a task
+that has already ended.
 
 Checks: `at17_a_timeout_kills_the_tree_and_ends_timed_out`,
 `at18_ctrl_c_kills_the_tree_and_ends_cancelled`,

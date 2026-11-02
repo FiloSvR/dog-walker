@@ -250,12 +250,19 @@ fn save(handover: &Handover, task: &Task) -> Result<(), Error> {
 
 /// A timeout as it reads in the handover.
 fn duration_text(timeout: Duration) -> String {
-    let seconds = timeout.as_secs_f64();
-    if seconds >= 60.0 && (seconds / 60.0).fract() == 0.0 {
-        format!("{} minutes", seconds / 60.0)
-    } else {
-        format!("{seconds} seconds")
+    const MINUTE: Duration = Duration::from_secs(60);
+    if timeout >= MINUTE && timeout.subsec_nanos() == 0 && timeout.as_secs().is_multiple_of(60) {
+        let minutes = timeout.as_secs() / 60;
+        return if minutes == 1 {
+            "1 minute".to_owned()
+        } else {
+            format!("{minutes} minutes")
+        };
     }
+    if timeout == Duration::from_secs(1) {
+        return "1 second".to_owned();
+    }
+    format!("{} seconds", timeout.as_secs_f64())
 }
 
 /// Asks a running task to stop, from another shell: a marker the runner watches for. A task
