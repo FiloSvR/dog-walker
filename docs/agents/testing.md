@@ -9,6 +9,9 @@ Read by `change`, `architect` and `plan`.
 | `#[cfg(test)]` modules in `src/` | unit | pure logic: config parsing, status transitions, handover rendering |
 | `tests/` | acceptance | the compiled binary run against a fake harness; one test per AT in `docs/requirements.md` |
 
+`tests/review_guard.rs` is the one exception to that table: it runs the `review-guard` step,
+which lives inline in `.github/workflows/review-guard-target.yml`, against a stub `gh`.
+
 The fake harness is a small test-only binary with scripted behaviours (write a
 result, write a malformed one, hang, read its environment, attempt a forbidden
 write, try the network, call `run`). Sandbox tests use the real `bwrap`, since
