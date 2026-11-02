@@ -16,6 +16,7 @@ use crate::error::{CliError, ConfigError, Error};
 use crate::handover::{self, Handover};
 use crate::launch::{self, End};
 use crate::output::{self, exit};
+use crate::sandbox::Plan;
 use crate::status::Status;
 use crate::task::{Task, TaskId};
 
@@ -55,6 +56,9 @@ enum Command {
         /// Allow delegating to the main profile
         #[arg(long)]
         allow_main: bool,
+        /// Run without the sandbox (bwrap): only when the user asks for it
+        #[arg(long)]
+        unsandboxed: bool,
     },
     /// Ask a running task to stop
     Cancel {
@@ -122,12 +126,14 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             task,
             file,
             allow_main,
+            unsandboxed,
         } => run_task(
             cli,
             profile,
             task.as_deref(),
             file.as_deref(),
             *allow_main,
+            *unsandboxed,
             stdout,
             stderr,
         ),
@@ -166,12 +172,16 @@ fn list(config: &Config, stdout: &mut dyn Write) -> io::Result<()> {
 
 /// Creates the task, runs the harness, finalizes the handover and prints its path. The exit
 /// code is 0 only when the task ended `done`.
+// Why: the runner threads the command line, the flag and both streams through; a struct would
+// only move the same fields one indirection further.
+#[allow(clippy::too_many_arguments)]
 fn run_task(
     cli: &Cli,
     profile_name: &str,
     task: Option<&str>,
     file: Option<&Path>,
     allow_main: bool,
+    unsandboxed: bool,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<u8, Error> {
@@ -199,10 +209,16 @@ fn run_task(
     // From here on a Ctrl-C is a cancel that closes the handover, not a dead runner; before a
     // task exists, the default disposition is the right one.
     launch::watch_for_interrupts()?;
-    let project = std::env::current_dir().map_err(|source| CliError::Project { source })?;
+    let project =
+        fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
+            .map_err(|source| CliError::Project { source })?;
+    let plan = Plan::new(profile, &project, unsandboxed)?;
+    // A sandbox that cannot be set up is a config error, not a failed task.
+    plan.check(profile, &project)?;
     let task = Task::create(&project, &brief)?;
     let handover_path = task.handover_path();
-    let mut handover = Handover::new(&task.id(), &profile.name, &brief);
+    let mut handover = Handover::new(&task.id(), &profile.name, &brief)
+        .with_sandbox(&plan.policy().render(plan.sandboxed()));
     save(&handover, &task)?;
     // The handover exists, so its path goes out now: whatever happens to the task from here,
     // stdout holds it (R6). The log lines are best effort: a closed stderr is no reason to
@@ -220,7 +236,7 @@ fn run_task(
         ),
     );
     let timeout = profile.timeout.unwrap_or(DEFAULT_TIMEOUT);
-    let (status, outcome) = match launch::launch(profile, &task, &project, &brief, timeout) {
+    let (status, outcome) = match launch::launch(profile, &task, &project, &brief, timeout, &plan) {
         Ok(End::Exited(ended)) => outcome(&task, ended),
         Ok(End::TimedOut) => (
             Status::TimedOut,

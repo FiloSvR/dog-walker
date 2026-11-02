@@ -8,10 +8,11 @@
 //! The harness leads a process group of its own, so a timeout or a cancel ends the processes in
 //! that group, not only the process dog-walker spawned.
 
+use std::ffi::OsString;
 use std::fs::File;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
@@ -22,6 +23,7 @@ use signal_hook::consts::{SIGINT, SIGTERM};
 
 use crate::config::Profile;
 use crate::error::LaunchError;
+use crate::sandbox::Plan;
 use crate::task::Task;
 
 /// The task folder the harness may write in.
@@ -67,20 +69,15 @@ pub fn launch(
     project: &Path,
     prompt: &str,
     timeout: Duration,
+    plan: &Plan,
 ) -> Result<End, LaunchError> {
     // The folder must still be the one that was created before anything is written in it.
     task.verify()?;
-    let argv = profile
-        .command
-        .as_ref()
-        .ok_or_else(|| LaunchError::NoCommand {
+    if profile.command.as_ref().is_none_or(Vec::is_empty) {
+        return Err(LaunchError::NoCommand {
             profile: profile.name.to_string(),
-        })?;
-    let (program, arguments) = argv.split_first().ok_or_else(|| LaunchError::NoCommand {
-        profile: profile.name.to_string(),
-    })?;
-    // `create_new`: the task folder is new, and a link planted at the log's name would send
-    // the harness's output wherever it points.
+        });
+    }
     let log = File::create_new(task.log_path()).map_err(|source| LaunchError::Log {
         path: task.log_path(),
         source,
@@ -89,18 +86,12 @@ pub fn launch(
         path: task.log_path(),
         source,
     })?;
-    let mut command = Command::new(program);
+    let extra = task_env(profile, task);
+    let mut command = plan
+        .command(profile, project, prompt, &extra, &task.handover_path())
+        .map_err(LaunchError::Sandbox)?;
     command
-        .args(arguments)
-        .arg(prompt)
         .current_dir(project)
-        .env(TASK_DIR, task.directory())
-        .env(RESULT_PATH, task.result_path())
-        .env(HANDOVER_PATH, task.handover_path())
-        .env(TASK_ID, task.id().to_string())
-        .env(PROFILE, profile.name.as_str())
-        .env(MODEL, &profile.model)
-        .env_remove(EFFORT)
         // A pipe, closed straight away, not /dev/null: the harness reads end-of-file either
         // way, and a sandbox that hides /dev/null cannot make the run fail to start.
         .stdin(Stdio::piped())
@@ -108,18 +99,61 @@ pub fn launch(
         .stderr(Stdio::from(log_for_errors))
         // Its own group, so a kill takes its children with it.
         .process_group(0);
-    if let Some(effort) = &profile.effort {
-        command.env(EFFORT, effort);
-    }
     // The handler is installed before anything runs: a Ctrl-C while the harness starts is a
     // cancel like any other, not a dead runner and a live task.
     install()?;
-    let mut child = command.spawn().map_err(|source| LaunchError::Spawn {
-        program: program.into(),
-        source,
-    })?;
+    let program = command.get_program().to_owned();
+    let mut attempts = 0;
+    let mut child = loop {
+        match command.spawn() {
+            Ok(child) => break child,
+            // A harness that is being written at this moment is transiently busy; it is worth
+            // another try before the task is called failed. (A sandboxed run spawns bwrap, so
+            // this covers the unsandboxed path; bwrap reports the busy harness in its exit.)
+            Err(source)
+                if source.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 5 =>
+            {
+                attempts += 1;
+                thread::sleep(POLL);
+            }
+            Err(source) => {
+                return Err(LaunchError::Spawn { program, source });
+            }
+        }
+    };
     drop(child.stdin.take());
     wait(&mut child, &task.directory().join(CANCEL_FILE), timeout)
+}
+
+/// What the harness learns about its task, in the environment.
+fn task_env(profile: &Profile, task: &Task) -> Vec<(OsString, OsString)> {
+    let mut env = vec![
+        (
+            OsString::from(TASK_DIR),
+            task.directory().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(RESULT_PATH),
+            task.result_path().into_os_string(),
+        ),
+        (
+            OsString::from(HANDOVER_PATH),
+            task.handover_path().into_os_string(),
+        ),
+        (
+            OsString::from(TASK_ID),
+            OsString::from(task.id().to_string()),
+        ),
+        (
+            OsString::from(PROFILE),
+            OsString::from(profile.name.as_str()),
+        ),
+        (OsString::from(MODEL), OsString::from(&profile.model)),
+    ];
+    if let Some(effort) = &profile.effort {
+        env.push((OsString::from(EFFORT), OsString::from(effort)));
+    }
+    env
 }
 
 /// Waits for the harness: it ends, the marker appears, the deadline passes, or Ctrl-C.
@@ -280,7 +314,17 @@ mod tests {
             timeout: None,
             command: Some(command.into_iter().map(str::to_owned).collect()),
             main: false,
+            network: true,
+            git_writable: false,
+            read_only_dirs: Vec::new(),
+            writable_dirs: Vec::new(),
+            env: Vec::new(),
         }
+    }
+
+    /// A plan without the sandbox: these tests are about waiting, not about bwrap.
+    fn plan(profile: &Profile) -> Plan {
+        Plan::new(profile, Path::new("."), true).unwrap()
     }
 
     /// A script that runs `body` and can be a profile's command.
@@ -313,12 +357,14 @@ mod tests {
     fn the_brief_is_the_last_argument_and_the_output_is_the_log() {
         let root = project("echo");
         let task = Task::create(&root, "a brief").unwrap();
+        let profile = profile(vec!["/bin/echo"]);
         let ended = launch(
-            &profile(vec!["/bin/echo"]),
+            &profile,
             &task,
             &root,
             "the brief",
             Duration::from_secs(5),
+            &plan(&profile),
         )
         .unwrap();
         assert!(matches!(ended, End::Exited(status) if status.success()));
@@ -331,12 +377,14 @@ mod tests {
     fn a_profile_without_a_command_is_an_error() {
         let root = project("no-command");
         let task = Task::create(&root, "a brief").unwrap();
+        let profile = profile(Vec::new());
         let error = launch(
-            &profile(Vec::new()),
+            &profile,
             &task,
             &root,
             "the brief",
             Duration::from_secs(5),
+            &plan(&profile),
         )
         .unwrap_err();
         assert!(matches!(error, LaunchError::NoCommand { .. }), "{error}");
@@ -349,12 +397,14 @@ mod tests {
         let root = project("timeout");
         let task = Task::create(&root, "a brief").unwrap();
         let command = script(&root, "hang.sh", HANGING);
+        let profile = profile(vec![command.as_str()]);
         let ended = launch(
-            &profile(vec![command.as_str()]),
+            &profile,
             &task,
             &root,
             "the brief",
             Duration::from_secs(2),
+            &plan(&profile),
         )
         .unwrap();
         assert!(matches!(ended, End::TimedOut), "{ended:?}");
@@ -383,12 +433,14 @@ mod tests {
             }
             File::create(marker).unwrap();
         });
+        let profile = profile(vec![command.as_str()]);
         let ended = launch(
-            &profile(vec![command.as_str()]),
+            &profile,
             &task,
             &root,
             "the brief",
             Duration::from_secs(30),
+            &plan(&profile),
         )
         .unwrap();
         canceller.join().unwrap();

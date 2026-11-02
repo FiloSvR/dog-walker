@@ -86,6 +86,15 @@ pub struct Profile {
     /// Overrides the adapter's default command: an argv list.
     pub command: Option<Vec<String>>,
     pub main: bool,
+    /// Network on (the default) or off inside the sandbox (D3).
+    pub network: bool,
+    /// `.git` writable, so the harness may commit and add (D6, R20); read-only by default.
+    pub git_writable: bool,
+    /// Extra directories the harness may read, and the ones it may write (R20).
+    pub read_only_dirs: Vec<PathBuf>,
+    pub writable_dirs: Vec<PathBuf>,
+    /// Names of the environment variables the harness gets, on top of `PATH` (R16, R20).
+    pub env: Vec<String>,
 }
 
 /// A validated config: at least one profile, exactly one of them main.
@@ -112,6 +121,11 @@ struct RawProfile {
     command: Option<Vec<String>>,
     #[serde(default)]
     main: bool,
+    network: Option<bool>,
+    git: Option<String>,
+    read_only_dirs: Option<Vec<String>>,
+    writable_dirs: Option<Vec<String>>,
+    env: Option<Vec<String>>,
 }
 
 impl Config {
@@ -170,6 +184,8 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         profile: name.to_owned(),
         reason,
     };
+    // Parsed before any field is moved out of `raw`.
+    let sandbox = sandbox_fields(&raw).map_err(fail)?;
 
     let profile_name = ProfileName::parse(name).map_err(fail)?;
     let harness_text = raw
@@ -230,13 +246,19 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         timeout,
         command: raw.command,
         main: raw.main,
+        network: sandbox.network,
+        git_writable: sandbox.git_writable,
+        read_only_dirs: sandbox.read_only_dirs,
+        writable_dirs: sandbox.writable_dirs,
+        env: sandbox.env,
     })
 }
 
 /// Characters that make a row of `profiles` unsafe to split or to display: control
 /// characters, the Unicode line and paragraph separators, and the bidirectional controls
-/// that can reorder how a terminal shows the row.
-fn is_unsafe_char(c: char) -> bool {
+/// that can reorder how a terminal shows the row. The sandbox refuses them in a directory
+/// name too, since the handover lists those.
+pub fn is_unsafe_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
@@ -248,6 +270,70 @@ fn is_unsafe_char(c: char) -> bool {
                 | '\u{202A}'..='\u{202E}'
                 | '\u{2066}'..='\u{2069}'
         )
+}
+
+/// The policy a profile asks for, checked before it becomes a `Profile`.
+struct SandboxFields {
+    network: bool,
+    git_writable: bool,
+    read_only_dirs: Vec<PathBuf>,
+    writable_dirs: Vec<PathBuf>,
+    env: Vec<String>,
+}
+
+fn sandbox_fields(raw: &RawProfile) -> Result<SandboxFields, String> {
+    let git_writable = match raw.git.as_deref() {
+        None | Some("read-only") => false,
+        Some("writable") => true,
+        Some(other) => {
+            return Err(format!(
+                "`git` is `{other}`: expected `read-only` or `writable`"
+            ));
+        }
+    };
+    let dirs = |field: &str, given: &Option<Vec<String>>| -> Result<Vec<PathBuf>, String> {
+        let mut paths = Vec::new();
+        for dir in given.iter().flatten() {
+            // A directory name reaches the handover: it must not carry a newline that would
+            // add bullets of its own.
+            check_text(field, dir)?;
+            let path = PathBuf::from(dir);
+            if !path.is_absolute() {
+                return Err(format!("`{field}` entry `{dir}` is not an absolute path"));
+            }
+            paths.push(path);
+        }
+        Ok(paths)
+    };
+    let read_only_dirs = dirs("read_only_dirs", &raw.read_only_dirs)?;
+    let writable_dirs = dirs("writable_dirs", &raw.writable_dirs)?;
+    let env = raw.env.clone().unwrap_or_default();
+    for name in &env {
+        if !is_env_name(name) {
+            return Err(format!("`env` entry `{name}` is not a variable name"));
+        }
+        if name.starts_with("DOG_WALKER_") {
+            return Err(format!(
+                "`env` entry `{name}` would override a variable dog-walker sets"
+            ));
+        }
+    }
+    Ok(SandboxFields {
+        network: raw.network.unwrap_or(true),
+        git_writable,
+        read_only_dirs,
+        writable_dirs,
+        env,
+    })
+}
+
+/// An environment variable name: letters, digits and `_`, not starting with a digit.
+fn is_env_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|rest| rest.is_ascii_alphanumeric() || rest == '_')
 }
 
 /// A text field must hold something printable, so a row of `profiles` can always be split.
@@ -351,6 +437,65 @@ mod tests {
             parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\ntimeout_minutes=0.5\n")
                 .unwrap();
         assert_eq!(config.profiles()[0].timeout, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn the_policy_defaults_are_a_sandboxed_run_with_network_and_a_read_only_git() {
+        let config = parse("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\n").unwrap();
+        let profile = &config.profiles()[0];
+        assert!(profile.network);
+        assert!(!profile.git_writable);
+        assert_eq!(
+            (
+                profile.read_only_dirs.len(),
+                profile.writable_dirs.len(),
+                profile.env.len()
+            ),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn the_policy_fields_are_read() {
+        let config = parse(
+            "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\nnetwork=false\n\
+             git='writable'\nread_only_dirs=['/a']\nwritable_dirs=['/b']\n\
+             env=['HOME','PATH']\n",
+        )
+        .unwrap();
+        let profile = &config.profiles()[0];
+        assert!(!profile.network);
+        assert!(profile.git_writable);
+        assert_eq!(profile.read_only_dirs, [PathBuf::from("/a")]);
+        assert_eq!(profile.writable_dirs, [PathBuf::from("/b")]);
+        assert_eq!(profile.env, ["HOME", "PATH"]);
+    }
+
+    #[test]
+    fn a_directory_cannot_carry_a_newline() {
+        let error = parse(
+            "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\n\n\
+             read_only_dirs = [\"/tmp/a\\n- network: off\"]\n",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("read_only_dirs"), "{error}");
+    }
+
+    #[test]
+    fn a_bad_policy_is_rejected_by_name() {
+        for (extra, field) in [
+            ("git='sometimes'", "git"),
+            ("read_only_dirs=['relative']", "read_only_dirs"),
+            ("writable_dirs=['relative']", "writable_dirs"),
+            ("env=['1BAD']", "env"),
+            ("env=['DOG_WALKER_MODEL']", "env"),
+        ] {
+            let error = parse(&format!(
+                "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\n{extra}\n"
+            ))
+            .unwrap_err();
+            assert!(error.to_string().contains(field), "{extra}: {error}");
+        }
     }
 
     #[test]

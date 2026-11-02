@@ -52,3 +52,16 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    is read from its handover and left untouched. The runner installs a Ctrl-C and a TERM
    handler for the same reason: whoever stops the run, the handover is closed. Rejected:
    `kill` from the canceller. Discussion: issue #5.
+
+8. **The sandbox shows the system and the project, and nothing else** (D8, 2026-11-03). Inside
+   bwrap the harness sees `/bin`, `/sbin`, `/usr`, `/lib`, `/lib64`, `/proc`, `/dev`, the
+   resolver's files and the certificate store, its own program if that lives elsewhere, the
+   project, and the directories the profile lists. The
+   root is remounted read-only, so a write anywhere else fails rather than landing in an empty
+   directory, and `/tmp` and the home directory are not mounted at all. The sandbox's `/dev` is
+   its own small writable device directory, never the host's. The rejected
+   alternative, `--ro-bind / /` with the project writable, leaves the whole host readable,
+   while R16 says read and write only inside the project, and hides nothing, which is D2's
+   point. The cost is that a harness needing configuration in `$HOME` or scratch in `/tmp`
+   must have those directories listed; adapters (#10) can declare them.
+   Discussion: issue #4.

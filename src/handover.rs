@@ -25,6 +25,8 @@ pub struct Handover {
     brief: String,
     /// What goes under the Result heading: the harness's result, or why the task failed.
     outcome: Option<String>,
+    /// The sandbox policy the run had, as a `## Sandbox` section when it is set.
+    sandbox: Option<String>,
 }
 
 impl Handover {
@@ -36,7 +38,15 @@ impl Handover {
             status: Status::Created,
             brief: brief.to_owned(),
             outcome: None,
+            sandbox: None,
         }
+    }
+
+    /// Records the policy the harness ran under (R16, R20).
+    #[must_use]
+    pub fn with_sandbox(mut self, policy: &str) -> Handover {
+        self.sandbox = Some(policy.to_owned());
+        self
     }
 
     pub fn status(&self) -> Status {
@@ -101,8 +111,12 @@ impl Handover {
             Some(outcome) => format!("\n## Result\n\n{}\n", outcome.trim_end()),
             None => String::new(),
         };
+        let sandbox = match &self.sandbox {
+            Some(policy) => format!("## Sandbox\n\n{}\n\n", policy.trim_end()),
+            None => String::new(),
+        };
         format!(
-            "{front}\n# Task {}\n\n## Brief\n\n{}\n{result}",
+            "{front}\n# Task {}\n\n{sandbox}## Brief\n\n{}\n{result}",
             self.id,
             self.brief.trim_end()
         )
@@ -160,6 +174,19 @@ mod tests {
         let text = handover.render();
         assert!(text.contains("status = \"done\""));
         assert!(text.contains("## Result\n\nChanged one file.\n"));
+    }
+
+    #[test]
+    fn a_sandbox_section_sits_before_the_brief() {
+        let handover = handover().with_sandbox("- tool: bwrap\n- network: off");
+        let text = handover.render();
+        let sandbox = text.find("## Sandbox").unwrap();
+        let brief = text.find("## Brief").unwrap();
+        assert!(sandbox < brief, "{text}");
+        assert!(
+            text.contains("## Sandbox\n\n- tool: bwrap\n- network: off\n\n## Brief"),
+            "{text}"
+        );
     }
 
     #[test]

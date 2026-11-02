@@ -15,18 +15,19 @@ a stub `gh` and the real `jq`.
 
 The fake harness is a small script that a test writes and a profile's `command` points at:
 its first argument is the behaviour (write a result, write a malformed one, do nothing, hang —
-it writes its pid and its child's into `pids` — edit the handover) and the brief arrives as its
-last argument, so `tests/run.rs` exercises the
+it writes its pid and its child's into `pids` — edit the handover, try a write outside the
+project, a connection, git, or reading and writing listed directories) and the brief arrives
+as its last argument, so `tests/run.rs` exercises the
 same launcher a user configures. It is not part of the binary, and there are no test-only
 variants in it.
 
-Sandbox tests use the real `bwrap`, since
-they check OS-level effects; they are skipped with a loud message when `bwrap`
-or user namespaces are missing, unless `DOG_WALKER_REQUIRE_SANDBOX` is set to any
-non-empty value, `0` included (CI sets `1`), in which case a missing sandbox fails them. Every sandbox
-test starts with the `sandbox_available` helper, copied in `tests/cli.rs` and `tests/run.rs`
-(the test binaries cannot share it); today the tests are `at24_works_without_network` and
-`at24_a_run_works_without_network`. A skipped test still reports `ok`; its SKIPPED line is printed to stderr, which cargo
+The sandbox tests (`at8`, `at19`-`at21`, `at25`, `at26`) use the real `bwrap`, since they check
+OS-level effects (`at22_without_bwrap_*` deliberately runs without it); they are skipped with a loud message when `bwrap` or user namespaces are missing,
+unless `DOG_WALKER_REQUIRE_SANDBOX` is set to any non-empty value, `0` included (CI sets `1`),
+in which case a missing sandbox fails them. The other `tests/run.rs` tests run with
+`--unsandboxed`, so the task lifecycle can be tested where bwrap is missing. Every sandbox test
+starts with the `sandbox_available` helper, copied in `tests/cli.rs` and `tests/run.rs` (the
+test binaries cannot share it). A skipped test still reports `ok`; its SKIPPED line is printed to stderr, which cargo
 shows even for a passing test. Everything runs offline. Only the acceptance tests
 carry an AT id in the name, and a failing test prints the fake harness's output.
 

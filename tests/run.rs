@@ -73,6 +73,53 @@ case $mode in
     ln -s "$DOG_WALKER_TASK_DIR/../../../victim.txt" "$DOG_WALKER_TASK_DIR/.handover.md.$PPID.tmp"
     printf 'a result beside a planted link\n' > "$result"
     ;;
+  outside-write)
+    outside="$DOG_WALKER_TASK_DIR/../../../../escaped.txt"
+    if printf 'escaped\n' > "$outside"; then
+      printf 'outside-write: written\n' > "$result"
+      exit 1
+    fi
+    if printf 'x' > "$DOG_WALKER_TASK_DIR/handover.md" 2>/dev/null; then edited=yes; else edited=no; fi
+    printf 'outside-write: denied\nedited: %s\n' "$edited" > "$result"
+    ;;
+  denied-write)
+    if printf 'needed\n' > "$DOG_WALKER_TASK_DIR/../../../../needed.txt"; then
+      printf 'the write outside the project worked\n' > "$result"
+      exit 1
+    fi
+    echo "the harness needed a directory outside the project" >&2
+    exit 1
+    ;;
+  network)
+    if [ -n "${TEST_PORT:-}" ] && (exec 3<>/dev/tcp/127.0.0.1/"$TEST_PORT") 2>/dev/null; then
+      local=reachable
+    else
+      local=unreachable
+    fi
+    printf 'local: %s\ninterfaces: %s\n' "$local" "$(grep -c ':' /proc/net/dev)" > "$result"
+    ;;
+  git)
+    status() { "$@" > /dev/null 2>&1; echo $?; }
+    {
+      printf 'log: %s\n' "$(status git log --oneline -1)"
+      printf 'diff: %s\n' "$(status git diff --stat)"
+      printf 'add: %s\n' "$(status git add .)"
+      printf 'commit: %s\n' "$(status git -c user.name=a -c user.email=a@b commit -m sandbox --no-gpg-sign)"
+      printf 'push: %s\n' "$(status git push "$DOG_WALKER_TASK_DIR/../../../../outside.git" HEAD:refs/heads/main)"
+    } > "$result"
+    ;;
+  env-report)
+    printf 'host: %s\n' "${HOST_SECRET:-<unset>}" > "$result"
+    ;;
+  extras)
+    {
+      printf 'env: %s\n' "${TEST_VALUE:-<unset>}"
+      printf 'read: %s\n' "$(cat "$TEST_READ/file.txt" 2>&1)"
+      printf 'write: %s\n' "$(printf 'written\n' > "$TEST_WRITE/file.txt" 2>&1 && echo ok)"
+      printf 'write-read-only: %s\n' "$(printf 'x' > "$TEST_READ/file.txt" 2>/dev/null && echo ok || echo denied)"
+      printf 'write-unlisted: %s\n' "$(printf 'x' > "$TEST_WRITE/../unlisted.txt" 2>/dev/null && echo ok || echo denied)"
+    } > "$result"
+    ;;
   move-task-dir)
     printf 'a result outside\n' > "$result"
     mv "$DOG_WALKER_TASK_DIR" "$DOG_WALKER_TASK_DIR.moved"
@@ -87,8 +134,12 @@ case $mode in
     ;;
   edit-status)
     handover="$DOG_WALKER_TASK_DIR/handover.md"
-    printf '+++\nid = "9999"\nprofile = "fake"\nstatus = "cancelled"\n+++\n\n# fake\n' > "$handover"
-    printf 'wrote a result after rewriting the handover\n' > "$result"
+    if printf '+++\nid = "9999"\nprofile = "fake"\nstatus = "cancelled"\n+++\n\n# fake\n' > "$handover" 2>/dev/null; then
+      edited=yes
+    else
+      edited=no
+    fi
+    printf 'edited: %s\n' "$edited" > "$result"
     ;;
   edit-status-no-result)
     handover="$DOG_WALKER_TASK_DIR/handover.md"
@@ -131,6 +182,14 @@ impl Fixture {
         Fixture::with_timeout(name, mode, None)
     }
 
+    /// A fixture whose secondary profile carries `extra` policy lines.
+    fn with_policy(name: &str, mode: &str, extra: &str) -> Self {
+        let fixture = Fixture::with_timeout(name, mode, None);
+        let text = fs::read_to_string(&fixture.config).unwrap();
+        fs::write(&fixture.config, format!("{text}{extra}\n")).unwrap();
+        fixture
+    }
+
     /// A fixture whose secondary profile has `timeout_minutes` set.
     fn with_timeout(name: &str, mode: &str, timeout_minutes: Option<f64>) -> Self {
         let dir = TempDir::new(name);
@@ -161,8 +220,26 @@ impl Fixture {
         }
     }
 
-    /// Runs `dog-walker --config <config> <args>` in the project directory.
+    /// Runs `dog-walker --config <config> <args> --unsandboxed` in the project directory.
+    ///
+    /// These tests are about the task lifecycle, not about the sandbox; the sandbox has its
+    /// own tests below, and they need bwrap.
     fn run(&self, args: &[&str]) -> Output {
+        let mut all: Vec<&str> = args.to_vec();
+        if all.first() == Some(&"run") {
+            all.push("--unsandboxed");
+        }
+        binary()
+            .arg("--config")
+            .arg(&self.config)
+            .args(&all)
+            .current_dir(&self.project)
+            .output()
+            .unwrap()
+    }
+
+    /// Runs the same command with the sandbox, for the tests that are about it.
+    fn run_sandboxed(&self, args: &[&str]) -> Output {
         binary()
             .arg("--config")
             .arg(&self.config)
@@ -251,10 +328,14 @@ impl Fixture {
 
 /// Starts `run` in the fixture, so a test can cancel it from another process.
 fn spawn_run(fixture: &Fixture, args: &[&str]) -> std::process::Child {
+    let mut all: Vec<&str> = args.to_vec();
+    if all.first() == Some(&"run") {
+        all.push("--unsandboxed");
+    }
     binary()
         .arg("--config")
         .arg(&fixture.config)
-        .args(args)
+        .args(&all)
         .current_dir(&fixture.project)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -350,7 +431,7 @@ fn at6_a_brief_from_stdin() {
     let mut child = binary()
         .arg("--config")
         .arg(&fixture.config)
-        .args(["run", "alpha", "-"])
+        .args(["run", "alpha", "-", "--unsandboxed"])
         .current_dir(&fixture.project)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -542,7 +623,7 @@ fn at14_the_handover_is_complete_before_the_harness_starts() {
     let handover = fixture.handover();
     assert!(
         handover.contains(
-            "handover-at-start:\n+++\nid = \"0001\"\nprofile = \"alpha\"\nstatus = \"running\"\n+++\n\n# Task 0001\n\n## Brief\n\nKeep it small.\n"
+            "handover-at-start:\n+++\nid = \"0001\"\nprofile = \"alpha\"\nstatus = \"running\"\n+++\n\n# Task 0001\n\n## Sandbox\n\n"
         ),
         "the snapshot holds the brief before the harness runs: {handover}"
     );
@@ -614,10 +695,9 @@ fn at16_a_result_that_is_not_utf8_fails() {
     assert!(fixture.handover().contains("the result is not valid UTF-8"));
 }
 
-// AT16 (R13): a harness that cannot be started is a failed task, not a usage error: the path
-// is still printed and the reason is in the handover.
+// R1: a harness that does not exist is a config error, caught before a task starts.
 #[test]
-fn at16_a_harness_that_cannot_start_fails_the_task() {
+fn at16_a_harness_that_cannot_start_is_a_config_error() {
     let fixture = Fixture::new("at16-nostart", "result");
     let config = fixture.dir.path().join("missing.toml");
     fs::write(
@@ -630,19 +710,17 @@ fn at16_a_harness_that_cannot_start_fails_the_task() {
     let out = binary()
         .arg("--config")
         .arg(&config)
-        .args(["run", "alpha", "Do the thing."])
+        .args(["run", "alpha", "Do the thing.", "--unsandboxed"])
         .current_dir(&fixture.project)
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
-    assert!(printed_path(&out).ends_with("handover.md"));
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
     assert!(
-        fixture
-            .handover()
-            .contains("cannot start the harness `/nonexistent/harness`"),
+        stderr(&out).contains("/nonexistent/harness"),
         "{}",
-        fixture.handover()
+        stderr(&out)
     );
+    assert!(!fixture.tasks().exists(), "no task folder");
 }
 
 // R1: a profile with no `command` cannot run yet, and the error says so before a task starts.
@@ -668,7 +746,9 @@ fn a_profile_without_a_command_is_a_usage_error() {
     assert!(!fixture.tasks().exists());
 }
 
-// AT24 (R19): a run needs no network: it works in a network-less namespace.
+// AT24 (R19): a run needs no network: it works in a network-less namespace. The inner run is
+// `--unsandboxed` because a sandbox cannot nest user namespaces; the outer bwrap is the
+// network-less sandbox here, and the point is that dog-walker itself needs no network.
 #[test]
 fn at24_a_run_works_without_network() {
     if !sandbox_available("at24_a_run_works_without_network") {
@@ -684,7 +764,7 @@ fn at24_a_run_works_without_network() {
         .arg(env!("CARGO_BIN_EXE_dog-walker"))
         .arg("--config")
         .arg(&fixture.config)
-        .args(["run", "alpha", "Do the thing."])
+        .args(["run", "alpha", "Do the thing.", "--unsandboxed"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
@@ -990,6 +1070,391 @@ fn cancel_names_a_missing_or_bad_id() {
     let out = fixture.run(&["cancel", "not-a-number"]);
     assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
     assert!(stderr(&out).contains("not-a-number"), "{}", stderr(&out));
+}
+
+/// A git repository in `project`, with one commit, so the harness has history to read.
+fn init_repo(project: &Path) {
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(project)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-q"]);
+    fs::write(project.join("README.md"), "hello\n").unwrap();
+    git(&["add", "."]);
+    git(&[
+        "-c",
+        "user.name=a",
+        "-c",
+        "user.email=a@b",
+        "commit",
+        "-q",
+        "--no-gpg-sign",
+        "-m",
+        "init",
+    ]);
+}
+
+// AT19 (R15, R16): a write outside the project fails at OS level, whatever the harness says.
+#[test]
+fn at19_a_write_outside_the_project_is_denied() {
+    if !sandbox_available("at19_a_write_outside_the_project_is_denied") {
+        return;
+    }
+    let fixture = Fixture::new("at19", "outside-write");
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("## Sandbox"), "{handover}");
+    assert!(handover.contains("- tool: bwrap"), "{handover}");
+    assert!(handover.contains("outside-write: denied"), "{handover}");
+    assert!(handover.contains("edited: no"), "{handover}");
+    assert!(
+        fixture.log().contains("Read-only file system"),
+        "the denial is in the harness log: {}",
+        fixture.log()
+    );
+    assert!(
+        !fixture.dir.path().join("escaped.txt").exists(),
+        "the write escaped the project"
+    );
+}
+
+// AT20 (R16): the network is there by default and cut with `network = false`. The host's
+// listener is the positive control: the test would not pass on a machine with no network.
+#[test]
+fn at20_the_network_is_there_and_can_be_cut() {
+    if !sandbox_available("at20_the_network_is_there_and_can_be_cut") {
+        return;
+    }
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+
+    let on = Fixture::with_policy("at20-on", "network", "env = [\"TEST_PORT\"]");
+    let out = binary()
+        .arg("--config")
+        .arg(&on.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&on.project)
+        .env("TEST_PORT", &port)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = on.handover();
+    assert!(handover.contains("- network: on"), "{handover}");
+    assert!(handover.contains("local: reachable"), "{handover}");
+
+    let off = Fixture::with_policy(
+        "at20-off",
+        "network",
+        "network = false\nenv = [\"TEST_PORT\"]",
+    );
+    let out = binary()
+        .arg("--config")
+        .arg(&off.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&off.project)
+        .env("TEST_PORT", &port)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = off.handover();
+    assert!(handover.contains("- network: off"), "{handover}");
+    assert!(handover.contains("local: unreachable"), "{handover}");
+    // One interface, `lo`: no way out at all.
+    assert!(handover.contains("interfaces: 1"), "{handover}");
+}
+
+// AT26 (R16a): `.git` is read-only by default: log and diff work, add and commit fail. A push
+// to a remote outside the project fails too, since that path is not in the sandbox.
+#[test]
+fn at26_git_is_read_only_by_default() {
+    if !sandbox_available("at26_git_is_read_only_by_default") {
+        return;
+    }
+    let fixture = Fixture::new("at26", "git");
+    init_repo(&fixture.project);
+    // A real remote just outside the project: the sandbox, not a missing repository, is what
+    // makes the push fail.
+    let remote = fixture.dir.path().join("outside.git");
+    let out = Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&remote)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("- git: read-only"), "{handover}");
+    assert!(handover.contains("log: 0"), "{handover}");
+    assert!(handover.contains("diff: 0"), "{handover}");
+    assert!(!handover.contains("add: 0"), "{handover}");
+    assert!(!handover.contains("commit: 0"), "{handover}");
+    assert!(!handover.contains("push: 0"), "{handover}");
+}
+
+// AT26 (R20): a profile may list `.git` writable, and then the harness can add and commit;
+// a push outside still fails.
+#[test]
+fn at26_git_can_be_writable() {
+    if !sandbox_available("at26_git_can_be_writable") {
+        return;
+    }
+    let fixture = Fixture::with_policy("at21-writable", "git", "git = \"writable\"");
+    init_repo(&fixture.project);
+    let remote = fixture.dir.path().join("outside.git");
+    let out = Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .arg(&remote)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("- git: writable"), "{handover}");
+    assert!(handover.contains("add: 0"), "{handover}");
+    assert!(handover.contains("commit: 0"), "{handover}");
+    assert!(!handover.contains("push: 0"), "{handover}");
+}
+
+// AT25 (R20): extra directories and variables from the profile reach the harness, and the
+// handover lists them.
+#[test]
+fn at25_extra_dirs_and_variables_reach_the_harness() {
+    if !sandbox_available("at25_extra_dirs_and_variables_reach_the_harness") {
+        return;
+    }
+    let fixture = Fixture::new("at25", "extras");
+    let shared = fixture.dir.path().join("shared");
+    let scratch = fixture.dir.path().join("scratch");
+    fs::create_dir_all(&shared).unwrap();
+    fs::create_dir_all(&scratch).unwrap();
+    fs::write(shared.join("file.txt"), "from the shared dir").unwrap();
+    let config = fs::read_to_string(&fixture.config).unwrap();
+    fs::write(
+        &fixture.config,
+        format!(
+            "{config}read_only_dirs = [\"{}\"]\nwritable_dirs = [\"{}\"]\n\
+             env = [\"TEST_VALUE\", \"TEST_READ\", \"TEST_WRITE\"]\n",
+            shared.display(),
+            scratch.display()
+        ),
+    )
+    .unwrap();
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("TEST_VALUE", "hello")
+        .env("TEST_READ", &shared)
+        .env("TEST_WRITE", &scratch)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("- tool: bwrap"), "{handover}");
+    assert!(handover.contains("- network: on"), "{handover}");
+    assert!(handover.contains("env: hello"), "{handover}");
+    assert!(handover.contains("write-read-only: denied"), "{handover}");
+    assert!(handover.contains("write-unlisted: denied"), "{handover}");
+    assert!(handover.contains("read: from the shared dir"), "{handover}");
+    assert!(handover.contains("write: ok"), "{handover}");
+    assert!(
+        handover.contains("- environment: TEST_VALUE, TEST_READ, TEST_WRITE, PATH"),
+        "{handover}"
+    );
+    assert!(
+        handover.contains(&shared.display().to_string()),
+        "{handover}"
+    );
+    assert!(
+        handover.contains(&scratch.display().to_string()),
+        "{handover}"
+    );
+    assert_eq!(
+        fs::read_to_string(scratch.join("file.txt")).unwrap(),
+        "written\n"
+    );
+}
+
+// AT23 (R17): without bwrap, `run` refuses and names the opt-out.
+#[test]
+fn at22_without_bwrap_run_refuses_unless_opt_out() {
+    let fixture = Fixture::new("at22", "result");
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("PATH", "/nonexistent")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("--unsandboxed"), "{}", stderr(&out));
+    assert!(!fixture.tasks().exists());
+}
+
+// AT23 (R17): with the explicit opt-out it runs, and the handover records the unsandboxed run.
+#[test]
+fn at22_without_bwrap_the_opt_out_runs_and_records_it() {
+    let fixture = Fixture::new("at22-none", "result");
+    let script = fixture.dir.path().join("plain.sh");
+    fs::write(
+        &script,
+        "#!/bin/sh\nprintf 'ran without a sandbox\\n' > \"$DOG_WALKER_RESULT_PATH\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let config = fixture.dir.path().join("plain.toml");
+    fs::write(
+        &config,
+        format!(
+            "[profiles.zeta]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n\n\
+             [profiles.alpha]\nharness = \"pi\"\nmodel = \"m\"\n\
+             command = [\"{}\"]\n",
+            script.display()
+        ),
+    )
+    .unwrap();
+    let out = binary()
+        .arg("--config")
+        .arg(&config)
+        .args(["run", "alpha", "Do the thing.", "--unsandboxed"])
+        .current_dir(&fixture.project)
+        .env("PATH", "/nonexistent")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(
+        handover.contains("- tool: none (--unsandboxed)"),
+        "{handover}"
+    );
+    assert!(handover.contains("- network: not enforced"), "{handover}");
+    assert!(
+        handover.contains("- environment: inherited, not cleaned"),
+        "{handover}"
+    );
+    assert!(handover.contains("ran without a sandbox"), "{handover}");
+}
+
+// AT8 (R7): an operation outside the policy is denied with no prompt; the task ends failed,
+// and the policy and the denial are recorded.
+#[test]
+fn at8_a_denied_operation_fails_the_task_and_is_traceable() {
+    if !sandbox_available("at8_a_denied_operation_fails_the_task_and_is_traceable") {
+        return;
+    }
+    let fixture = Fixture::new("at8", "denied-write");
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"failed\""), "{handover}");
+    assert!(handover.contains("- tool: bwrap"), "{handover}");
+    assert!(handover.contains("- network: on"), "{handover}");
+    assert!(
+        fixture.log().contains("Read-only file system"),
+        "the denial is in the harness log: {}",
+        fixture.log()
+    );
+    assert!(!fixture.dir.path().join("needed.txt").exists());
+}
+
+// AT21 (R16): the environment is the allowlist, not the runner's. A secret the runner has is
+// invisible to the harness and never reaches the handover.
+#[test]
+fn at21_a_host_secret_is_invisible() {
+    if !sandbox_available("at21_a_host_secret_is_invisible") {
+        return;
+    }
+    let fixture = Fixture::new("at21-secret", "env-report");
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("HOST_SECRET", "topsecret")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("host: <unset>"), "{handover}");
+    assert!(!handover.contains("topsecret"), "{handover}");
+}
+
+// AT1 (R1): the model and effort reach a sandboxed harness too.
+#[test]
+fn at1_the_model_and_effort_reach_the_sandboxed_harness() {
+    if !sandbox_available("at1_the_model_and_effort_reach_the_sandboxed_harness") {
+        return;
+    }
+    let fixture = Fixture::new("at1-sandboxed", "result");
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("- tool: bwrap"), "{handover}");
+    assert!(handover.contains("model: local/qwen"), "{handover}");
+    assert!(handover.contains("effort: medium"), "{handover}");
+}
+
+// AT17 (R14): the timeout also works inside the sandbox, and the PID namespace takes the
+// whole tree with it.
+#[test]
+fn at17_a_timeout_inside_the_sandbox_cleans_up() {
+    if !sandbox_available("at17_a_timeout_inside_the_sandbox_cleans_up") {
+        return;
+    }
+    let fixture = Fixture::with_timeout("at17-sandboxed", "hang", Some(0.03));
+    let started = Instant::now();
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert!(
+        fixture.handover().contains("status = \"timed-out\""),
+        "{}",
+        fixture.handover()
+    );
+    assert!(
+        no_process_runs(&fixture.dir.path().join("fake.sh")),
+        "the sandbox tree is still running"
+    );
+}
+
+/// Whether no process on the host is running `path`: inside a PID namespace the harness sees
+/// its own pids, so the host is where the leftovers would be.
+fn no_process_runs(path: &Path) -> bool {
+    let target = path.display().to_string();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut found = false;
+        if let Ok(entries) = fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                if fs::read(entry.path().join("cmdline"))
+                    .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).contains(&target))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.

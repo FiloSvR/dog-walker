@@ -76,6 +76,8 @@ pub enum LaunchError {
     Deadline { timeout: std::time::Duration },
     #[error(transparent)]
     Task(#[from] TaskError),
+    #[error(transparent)]
+    Sandbox(#[from] SandboxError),
     #[error("profile `{profile}` has no `command` to run")]
     NoCommand { profile: String },
     #[error("cannot open the log {}: {source}", path.display())]
@@ -89,7 +91,39 @@ pub enum LaunchError {
     Wait { source: io::Error },
 }
 
-/// Why the command line could not produce a task.
+/// Why the sandbox could not be set up.
+#[derive(Debug, thiserror::Error)]
+pub enum SandboxError {
+    #[error(
+        "bwrap is not installed: install bubblewrap, or pass --unsandboxed to run without a sandbox"
+    )]
+    NoTool,
+    #[error("profile `{profile}` has no `command` to sandbox")]
+    NoCommand { profile: String },
+    #[error("cannot resolve the harness `{program}`: {source}")]
+    Program { program: String, source: io::Error },
+    #[error("cannot mount {}: {source}", path.display())]
+    Dir { path: PathBuf, source: io::Error },
+    #[error("`{name}` is listed in the profile's `env` and is not set")]
+    MissingEnv { name: String },
+    #[error("bwrap cannot create a sandbox here: {reason}; pass --unsandboxed to run without one")]
+    NoSandbox { reason: String },
+    #[error("the directory {} is not a directory", path.display())]
+    NotDir { path: PathBuf },
+    #[error("a profile cannot list `/` itself; list the directories it needs")]
+    RootDir,
+    #[error("a profile cannot mount the system directory {}", path.display())]
+    SystemDir { path: PathBuf },
+    #[error("the directory {} is listed as both read-only and writable", path.display())]
+    Overlap { path: PathBuf },
+    #[error("the directory {} has a character the handover cannot list", path.display())]
+    Unprintable { path: PathBuf },
+    #[error("the read-only directory {} contains the project: it would make the run unwritable", path.display())]
+    AboveProject { path: PathBuf },
+    #[error("bwrap inside the project cannot be trusted: {}", path.display())]
+    BwrapInsideProject { path: PathBuf },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error("the task is empty: pass the brief as text, with --file, or `-` for stdin")]
@@ -121,6 +155,8 @@ pub enum Error {
     Status(#[from] StatusError),
     #[error(transparent)]
     Task(#[from] TaskError),
+    #[error(transparent)]
+    Sandbox(#[from] SandboxError),
     #[error(transparent)]
     Handover(#[from] HandoverError),
     #[error(transparent)]
