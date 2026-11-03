@@ -96,6 +96,7 @@ pub struct Profile {
     pub writable_dirs: Vec<PathBuf>,
     /// Names of the environment variables the harness gets, on top of `PATH` (R16, R20).
     pub env: Vec<String>,
+    pub secrets: Vec<String>,
 }
 
 /// A validated config: at least one profile, exactly one of them main.
@@ -127,6 +128,7 @@ struct RawProfile {
     read_only_dirs: Option<Vec<String>>,
     writable_dirs: Option<Vec<String>>,
     env: Option<Vec<String>>,
+    secrets: Option<Vec<String>>,
 }
 
 impl Config {
@@ -252,6 +254,7 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         read_only_dirs: sandbox.read_only_dirs,
         writable_dirs: sandbox.writable_dirs,
         env: sandbox.env,
+        secrets: sandbox.secrets,
     })
 }
 
@@ -280,6 +283,7 @@ struct SandboxFields {
     read_only_dirs: Vec<PathBuf>,
     writable_dirs: Vec<PathBuf>,
     env: Vec<String>,
+    secrets: Vec<String>,
 }
 
 fn sandbox_fields(raw: &RawProfile) -> Result<SandboxFields, String> {
@@ -319,12 +323,25 @@ fn sandbox_fields(raw: &RawProfile) -> Result<SandboxFields, String> {
             ));
         }
     }
+    let secrets = raw.secrets.clone().unwrap_or_default();
+    for name in &secrets {
+        if !is_env_name(name) {
+            return Err(format!("`secrets` entry `{name}` is not a variable name"));
+        }
+        // A secret the harness does not get is not a secret this run can leak.
+        if !env.contains(name) {
+            return Err(format!(
+                "`secrets` entry `{name}` is not in `env`: list it there too"
+            ));
+        }
+    }
     Ok(SandboxFields {
         network: raw.network.unwrap_or(true),
         git_writable,
         read_only_dirs,
         writable_dirs,
         env,
+        secrets,
     })
 }
 
@@ -578,6 +595,8 @@ mod tests {
             ("read_only_dirs=['relative']", "read_only_dirs"),
             ("writable_dirs=['relative']", "writable_dirs"),
             ("env=['1BAD']", "env"),
+            ("env=['X']\nsecrets=['Y']", "secrets"),
+            ("env=['X']\nsecrets=['1BAD']", "secrets"),
             ("env=['DOG_WALKER_MODEL']", "env"),
         ] {
             let error = parse(&format!(

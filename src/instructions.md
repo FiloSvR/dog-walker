@@ -24,6 +24,9 @@ profile itself needs `--allow-main`.
 
 The task runs in a sandbox: it sees the project, the system's programs, and only the
 directories and variables its profile lists (`read_only_dirs`, `writable_dirs`, `env`). A
+profile can also name `secrets`: the values those variables hold (they must also be in `env`)
+are replaced with `[redacted]` in the handover and the log, though a value the harness invents
+or transforms is not caught. A
 profile can cut the network (`network = false`) and make `.git` writable
 (`git = "writable"`). If bwrap is missing, `run` refuses; `--unsandboxed` runs without it and
 the handover says so.

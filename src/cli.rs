@@ -16,7 +16,7 @@ use crate::error::{CliError, ConfigError, Error};
 use crate::handover::{self, Handover};
 use crate::launch::{self, End};
 use crate::output::{self, exit};
-use crate::sandbox::{Plan, Policy, Request};
+use crate::sandbox::{self, Plan, Policy, Request};
 use crate::status::Status;
 use crate::task::{Task, TaskId};
 
@@ -259,10 +259,16 @@ fn run_task(
     let plan = Plan::from_policy(policy, &project, unsandboxed)?;
     // A sandbox that cannot be set up is a config error, not a failed task.
     plan.check(profile, &project)?;
-    let task = Task::create(&project, &brief)?;
+    // What the record keeps is redacted, down to the folder's name: the harness reads the
+    // brief as written, and the task folder is dog-walker's (R18).
+    let secrets = plan.policy().secret_values();
+    let recorded = sandbox::redact(&brief, &secrets);
+    let task = Task::create(&project, &recorded)?;
     let handover_path = task.handover_path();
-    let mut handover = Handover::new(&task.id(), &profile.name, &brief)
-        .with_sandbox(&plan.policy().render(plan.sandboxed()));
+    // The policy section lists directories, which could contain a secret value; it is
+    // redacted like the rest of what dog-walker keeps (R18).
+    let sandbox = sandbox::redact(&plan.policy().render(plan.sandboxed()), &secrets);
+    let mut handover = Handover::new(&task.id(), &profile.name, &recorded).with_sandbox(&sandbox);
     save(&handover, &task)?;
     // The handover exists, so its path goes out now: whatever happens to the task from here,
     // stdout holds it (R6). The log lines are best effort: a closed stderr is no reason to
@@ -289,7 +295,7 @@ fn run_task(
         Ok(End::Cancelled) => (Status::Cancelled, "The task was cancelled.".to_owned()),
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
-    handover.end(status, &outcome)?;
+    handover.end(status, &sandbox::redact(&outcome, &secrets))?;
     save(&handover, &task)?;
     // Only now that the end state is on disk: a cancel that arrives later reads it and backs
     // off, and one that arrived earlier finds nothing to do.

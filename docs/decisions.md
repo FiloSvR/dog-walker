@@ -77,8 +77,18 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    merging the lists, which would let a repository grant itself access to the machine.
    Discussion: issue #6.
 
-12. **The delegation guard is a marker and, outside the sandbox, an ancestry check**
-    (D12, 2026-11-03). A `run` refuses when `DOG_WALKER_TASK_DIR` names an existing directory or
+10. **Secrets are redacted because they are named, not because they look like secrets**
+    (D10, 2026-11-03). A profile lists `secrets = ["ANTHROPIC_API_KEY"]` next to the `env`
+    names; every value those names hold in the runner's environment is replaced with
+    `[redacted]` in the handover and in `harness.log` once the run ends, and the handover lists
+    the names. Guessing by name suffix was rejected: it would either miss a secret with an
+    unhelpful name (`env = ["TOKEN"]`) or shred ordinary output (`HOME`), and a list makes the
+    decision the user's. The cost is that a value the harness invents or transforms is not
+    caught: the sandbox limits what the harness can read, not what it can print, and the
+    redaction only removes the exact values it was given. Discussion: issue #8.
+
+11. **The delegation guard is a marker and, outside the sandbox, an ancestry check**
+    (D11, 2026-11-03). A `run` refuses when `DOG_WALKER_TASK_DIR` names an existing directory or
     when an ancestor process is a dog-walker. The variable is what a harness can clear, so on
     its own it is a reminder, not a barrier; the ancestry is outside the harness's control,
     but the sandbox gives the harness a PID namespace of its own, where the outer runner is
