@@ -45,6 +45,7 @@ Profiles in a config file (harness, model, thinking effort, sandbox, timeout), o
 - R18 Configured secret values are redacted from the handover, the logs and the result file.
 - R22 `dog-walker doctor <profile>` runs the checks a task would meet, without a task or the harness: the directories, the sandbox, the program, the `env` names, a write to the temporary directory and a TLS fetch inside the sandbox. One line per check, no values, exit 1 on any failure.
 - R23 The handover's front matter records the tokens a task used when its harness reports them (`tokens`, and `turns` and `cost_usd` when it says), read from the harness's log; a harness that reports nothing readable has no such key, never zero. The numbers are the harness's own report.
+- R24 `dog-walker instructions` tells the main harness what a brief should carry (where to look, what is settled, what to skip, how to verify, the result format) and when a rich brief pays and when a short one is right.
 - R21 `dog-walker instructions` prints a short text for the main harness: how to write a brief, call `run`, read the exit code and find the handover.
 - R19 No server, daemon or telemetry; dog-walker makes no network request itself.
 - R16a By default the project's `.git` is read-only inside the sandbox, so commit and push fail at OS level while `git log` and `git diff` work. A profile can list `.git` as writable (R20); push still fails without credentials.
@@ -88,5 +89,5 @@ Delegation back from a secondary. A background or pollable mode. ACP. Cost budge
 - [ ] AT28 (R4) An adapter runs its harness with the profile's model and effort (or its own profile, as dsh does), non-interactively, and its result reaches the handover; every harness has one.
 - [ ] AT29 (R22) `doctor` passes a healthy profile, reports every failure (unset variable, unwritable temporary directory, missing directory) with a fix and exits 1, and prints no value.
 - [ ] AT30 (R23) The handover records the tokens that Claude Code, Pi and Codex report in their output, summed over the run, and none for dsh or for a profile with its own `command`; the run's last log line says the total.
-- [ ] AT27 (R21) `dog-walker instructions` prints text that names `run`, the exit code and the handover location.
+- [ ] AT27 (R21, R24) `dog-walker instructions` prints text that names `run`, the exit code and the handover location, and says when a rich brief pays and when a short one is right.
 - [ ] AT25 (R20) Extra directories and passed variables from a profile are available to the harness; the handover lists them, the network setting and the variable names.
