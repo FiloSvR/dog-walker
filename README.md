@@ -24,8 +24,9 @@ Rust 1.99 and a C linker.
 and a `reviewer` (or `no` to skip either). It finds each harness's install directory, writes
 the profiles, creates a private directory and an env file for each, and adds a line to your main
 harness's instructions file so that it reads `dog-walker instructions` before it delegates. It
-asks whether that file is this project's (the default) or your global one. It shows what it will
-write and asks first. It never asks for, reads or writes a
+first asks whether this is for the project (the default: its own profiles, kept outside the
+repository, and its own `CLAUDE.md` or `AGENTS.md`) or global (one config for every project). It
+shows what it will write and asks first. It never asks for, reads or writes a
 secret: it prints what is left to you (your key, a login), and you finish with:
 
     set -a; . ~/.config/dog-walker/worker.env; set +a

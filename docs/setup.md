@@ -19,11 +19,16 @@ It asks which harness you open yourself (the main profile, required), then, for 
 a `reviewer`, which harness and model to use or `no` to skip. It finds each harness's install
 directory, writes the profile, creates a private directory and an env file for it, and adds a
 line to your main harness's instructions file so that it reads `dog-walker instructions` before
-it delegates. It asks where: this project's file (`CLAUDE.md` for Claude Code, `AGENTS.md` for
-Codex, in the directory you run it from; the default) or your global one (`~/.claude/CLAUDE.md`,
+it delegates. It first asks whether this is for the project or global. **Project** (the default)
+writes a config of its own for the directory you run it from, at
+`~/.config/dog-walker/projects/<name>-<hash>/config.toml` with the private directories and env
+files beside it, and the line goes in that project's `CLAUDE.md` or `AGENTS.md`. It is kept
+outside the repository, so a repository cannot define profiles (R3). From that directory every
+command uses it, and only it; other directories keep the global config. **Global** writes
+`~/.config/dog-walker/config.toml` and the main harness's global file (`~/.claude/CLAUDE.md`,
 `~/.codex/AGENTS.md`), which tells every project. `--scope project|global` answers it, and
 `--yes` takes the project. It shows everything it will write and asks before it writes. Pi and
-dsh have no verified file, so for those it prints the line for you to add.
+dsh have no verified instructions file, so for those it prints the line for you to add.
 
 It never asks for, reads or writes a secret. What it leaves to you is printed at the end: put
 your key in the env file (or run `claude setup-token`, or copy the Codex login), load the env

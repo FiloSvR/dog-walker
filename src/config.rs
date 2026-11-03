@@ -517,6 +517,47 @@ impl ProjectConfig {
 
 /// Where the config file is when `--config` is not given: `$XDG_CONFIG_HOME` if it is an
 /// absolute path, otherwise `$HOME/.config`.
+/// The user-owned config of one project: `projects/<name>-<hash>/config.toml` beside the global
+/// config, keyed by the project's absolute path. It lives outside the repository on purpose, so
+/// that a repository cannot define the profiles that decide what a task may touch (R3).
+pub fn project_config_path(global: &Path, project: &Path) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    // FNV-1a: small, and the same on every Rust version, which a stored path needs.
+    let hash = project
+        .as_os_str()
+        .as_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+    let name: String = project
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(40)
+        .collect();
+    let name = if name.is_empty() {
+        "project".to_owned()
+    } else {
+        name
+    };
+    Some(
+        global
+            .parent()?
+            .join("projects")
+            .join(format!("{name}-{hash:016x}"))
+            .join("config.toml"),
+    )
+}
+
 pub fn default_path(xdg_config_home: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
     let base = match xdg_config_home.map(PathBuf::from) {
         Some(dir) if dir.is_absolute() => dir,
@@ -528,6 +569,31 @@ pub fn default_path(xdg_config_home: Option<OsString>, home: Option<OsString>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_project_config_is_keyed_by_the_project_and_sits_beside_the_global_one() {
+        let global = Path::new("/h/.config/dog-walker/config.toml");
+        let a = project_config_path(global, Path::new("/work/app")).unwrap();
+        let b = project_config_path(global, Path::new("/other/app")).unwrap();
+        assert_ne!(a, b);
+        assert_eq!(
+            a,
+            project_config_path(global, Path::new("/work/app")).unwrap()
+        );
+        assert!(a.starts_with("/h/.config/dog-walker/projects"));
+        assert!(
+            a.parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("app-")
+        );
+        assert!(a.ends_with("config.toml"));
+        let odd = project_config_path(global, Path::new("/w/my app\n")).unwrap();
+        assert!(!odd.to_string_lossy().contains(' '));
+        assert!(!odd.to_string_lossy().contains('\n'));
+    }
 
     fn parse(text: &str) -> Result<Config, ConfigError> {
         Config::parse(text, Path::new("test.toml"))
