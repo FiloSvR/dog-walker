@@ -176,8 +176,12 @@ with its own `command` does not get the adapter's names — it is not running th
 resolves, the model and the effort reach the argv, the brief is exactly the last argument,
 stdin is closed so the harness cannot prompt, and the result reaches the handover.
 
+The adapters today are Claude Code (`claude -p --dangerously-skip-permissions --model … --`)
+and Pi (`pi -p --model … --thinking … --`); Codex and dsh are their own issues, and until then
+a profile for them names `command`.
+
 Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
-`at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`,
+`at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`, `at28_the_pi_adapter_meets_the_contract`,
 `at28_a_harness_without_an_adapter_is_refused_before_a_task`, and the unit tests in
 `src/adapter.rs`.
 

@@ -785,13 +785,13 @@ fn at16_a_harness_that_cannot_start_is_a_config_error() {
 
 // R1: a profile with no `command` cannot run yet, and the error says so before a task starts.
 #[test]
-fn a_profile_without_a_command_is_a_usage_error() {
+fn a_profile_without_a_command_or_adapter_is_a_usage_error() {
     let fixture = Fixture::new("no-command", "result");
     let config = fixture.dir.path().join("no-command.toml");
     fs::write(
         &config,
         "[profiles.zeta]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n\n\
-         [profiles.beta]\nharness = \"pi\"\nmodel = \"m\"\n",
+         [profiles.beta]\nharness = \"codex\"\nmodel = \"m\"\n",
     )
     .unwrap();
     let out = binary()
@@ -802,7 +802,11 @@ fn a_profile_without_a_command_is_a_usage_error() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
-    assert!(stderr(&out).contains("command"), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("`codex`") && err.contains("not written yet"),
+        "{err}"
+    );
     assert!(!fixture.tasks().exists());
 }
 
