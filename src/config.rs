@@ -517,6 +517,48 @@ impl ProjectConfig {
 
 /// Where the config file is when `--config` is not given: `$XDG_CONFIG_HOME` if it is an
 /// absolute path, otherwise `$HOME/.config`.
+/// The project a directory belongs to: the root of its repository, and for a linked git worktree
+/// the main checkout, so that every worktree of a repository (and every subdirectory) uses the
+/// one project config (D20). A directory that is in no repository is its own project.
+///
+/// A worktree's `.git` file is the repository's own to name, so it is believed only when the
+/// main checkout agrees: the worktree must be listed there, and point back at this very file. A
+/// repository cannot name another project's checkout and borrow that project's profiles.
+pub fn project_root(dir: &Path) -> PathBuf {
+    for ancestor in dir.ancestors() {
+        let git = ancestor.join(".git");
+        match fs::symlink_metadata(&git) {
+            Ok(meta) if meta.is_dir() => return ancestor.to_path_buf(),
+            Ok(meta) if meta.is_file() => {
+                return main_checkout(ancestor, &git).unwrap_or_else(|| ancestor.to_path_buf());
+            }
+            _ => {}
+        }
+    }
+    dir.to_path_buf()
+}
+
+/// The main checkout that lists `worktree` (whose `.git` is the file `git_file`), if it does.
+fn main_checkout(worktree: &Path, git_file: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(git_file).ok()?;
+    let named = PathBuf::from(text.lines().next()?.strip_prefix("gitdir:")?.trim());
+    let gitdir = fs::canonicalize(if named.is_absolute() {
+        named
+    } else {
+        worktree.join(named)
+    })
+    .ok()?;
+    let common =
+        fs::canonicalize(gitdir.join(fs::read_to_string(gitdir.join("commondir")).ok()?.trim()))
+            .ok()?;
+    let listed = gitdir.parent()? == common.join("worktrees");
+    let back = fs::canonicalize(fs::read_to_string(gitdir.join("gitdir")).ok()?.trim()).ok()?;
+    if !listed || back != fs::canonicalize(git_file).ok()? || common.file_name()? != ".git" {
+        return None;
+    }
+    common.parent().map(Path::to_path_buf)
+}
+
 /// The user-owned config of one project: `projects/<name>-<hash>/config.toml` beside the global
 /// config, keyed by the project's absolute path. It lives outside the repository on purpose, so
 /// that a repository cannot define the profiles that decide what a task may touch (R3).

@@ -304,8 +304,8 @@ fn global_config_path() -> Result<PathBuf, ConfigError> {
 
 /// Where this directory's own config would be, whether or not it exists.
 fn project_config_path(global: &Path) -> Option<PathBuf> {
-    let project = fs::canonicalize(std::env::current_dir().ok()?).ok()?;
-    config::project_config_path(global, &project)
+    let here = fs::canonicalize(std::env::current_dir().ok()?).ok()?;
+    config::project_config_path(global, &config::project_root(&here))
 }
 
 /// Reads the config the command line points at.
