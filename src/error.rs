@@ -24,6 +24,10 @@ pub enum ConfigError {
     Profile { profile: String, reason: String },
     #[error("exactly one profile must be main, but none is: set `main = true` on one")]
     NoMain,
+    #[error("`limits` key `{key}` is not `harness/model` with a known harness")]
+    LimitKey { key: String },
+    #[error("`limits` key `{key}` is 0: a limit has to allow at least one task")]
+    LimitZero { key: String },
     #[error("exactly one profile must be main, but these are: {names}")]
     ManyMain { names: String },
     #[error("cannot read the project config {}: {source}", path.display())]
@@ -168,6 +172,15 @@ pub enum CliError {
     Cancel { path: PathBuf, source: io::Error },
 }
 
+/// Why a running slot could not be taken.
+#[derive(Debug, thiserror::Error)]
+pub enum SlotError {
+    #[error("cannot use the run directory {}: {source}", path.display())]
+    Dir { path: PathBuf, source: io::Error },
+    #[error("cannot write the run record {}: {source}", path.display())]
+    Record { path: PathBuf, source: io::Error },
+}
+
 /// Everything that can make a command fail.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -181,6 +194,8 @@ pub enum Error {
     Task(#[from] TaskError),
     #[error(transparent)]
     Sandbox(#[from] SandboxError),
+    #[error(transparent)]
+    Slot(#[from] SlotError),
     #[error(transparent)]
     Override(#[from] OverrideError),
     #[error(transparent)]

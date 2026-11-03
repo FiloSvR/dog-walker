@@ -103,6 +103,8 @@ pub struct Profile {
 pub struct Config {
     /// The main profile first, then the others by name.
     profiles: Vec<Profile>,
+    /// How many tasks of a harness and model may run at once, keyed `harness/model`.
+    limits: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,6 +112,8 @@ pub struct Config {
 struct RawConfig {
     #[serde(default)]
     profiles: BTreeMap<String, RawProfile>,
+    #[serde(default)]
+    limits: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,12 +175,33 @@ impl Config {
         // `false` sorts before `true`, so negate to put the main profile first;
         // the sort is stable, so the others stay in name order.
         profiles.sort_by_key(|profile| !profile.main);
-        Ok(Config { profiles })
+        for (key, limit) in &raw.limits {
+            let Some((harness, model)) = key.split_once('/') else {
+                return Err(ConfigError::LimitKey { key: key.clone() });
+            };
+            if harness.is_empty() || model.is_empty() || Harness::parse(harness).is_none() {
+                return Err(ConfigError::LimitKey { key: key.clone() });
+            }
+            if *limit == 0 {
+                return Err(ConfigError::LimitZero { key: key.clone() });
+            }
+        }
+        Ok(Config {
+            profiles,
+            limits: raw.limits,
+        })
     }
 
     /// The profiles, the main one first.
     pub fn profiles(&self) -> &[Profile] {
         &self.profiles
+    }
+
+    /// How many tasks of this profile's harness and model may run at once, when a limit is
+    /// configured: absent means as many as the user starts.
+    pub fn limit(&self, profile: &Profile) -> Option<usize> {
+        let key = format!("{}/{}", profile.harness.as_str(), profile.model);
+        self.limits.get(&key).copied()
     }
 }
 

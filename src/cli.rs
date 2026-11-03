@@ -17,6 +17,7 @@ use crate::handover::{self, Handover};
 use crate::launch::{self, End};
 use crate::output::{self, exit};
 use crate::sandbox::{Plan, Policy, Request};
+use crate::slots;
 use crate::status::Status;
 use crate::task::{Task, TaskId};
 
@@ -259,6 +260,25 @@ fn run_task(
     // abandon a task.
     output::path(stdout, &handover_path)?;
     log(stderr, &format!("dog-walker: task {} created", task.id()));
+    // A slot per running task: the limit is per harness and model, and the slot's record is
+    // what tells the next runner that this task is writing the project too (R9).
+    let limit = config.limit(profile);
+    if let Some(limit) = limit {
+        log(
+            stderr,
+            &format!("dog-walker: waiting for a slot (at most {limit} at once)"),
+        );
+    }
+    let slot = slots::acquire(&project, profile, limit, &task.id().to_string())?;
+    for other in slot.overlaps() {
+        log(
+            stderr,
+            &format!(
+                "dog-walker: warning: task {} overlaps task {other}'s write scope (the project)",
+                task.id()
+            ),
+        );
+    }
     handover.start()?;
     save(&handover, &task)?;
     log(

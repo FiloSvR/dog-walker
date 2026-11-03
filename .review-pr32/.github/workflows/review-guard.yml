@@ -1,0 +1,81 @@
+# Fails while a pull request carries the `needs/review` label, and passes again as soon as
+# the label is removed, without a new push: the label events start a new run on the same commit
+# (once a runner picks it up, which can take minutes).
+#
+# Runs on `pull_request_target`, not `pull_request`: GitHub takes this file, and every step in
+# it, from the default branch, so a pull request cannot change the check that gates it. The job
+# checks nothing out, runs no code from the pull request, holds `pull-requests: read` and
+# nothing else, and takes a single value from the event: the pull request number.
+#
+# The job reads the live labels, not the snapshot in the event payload, so the order in which
+# quick label events finish does not matter: whichever run finishes last sees the current state.
+name: review-guard
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: review-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-guard:
+    name: review-guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Fail while a review is owed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # If the labels cannot be read, this step fails: the guard fails closed.
+          # `labels` is printed before the names so a pull request with no labels still
+          # prints something: an empty result can only mean the call misbehaved. `jq` fails on
+          # a response without a label list, on a label list that is not an array, and on a
+          # label that is not an object with a string name, and the step fails with it rather
+          # than reading the response as one label fewer.
+          if ! response=$(gh api "repos/$REPO/pulls/$PR" --jq '
+            if (.labels | type) == "array" then
+              "labels",
+              (.labels[] | if type == "object" and (.name | type) == "string"
+                           then .name
+                           else error("unexpected label shape")
+                           end)
+            else
+              error("the response has no label list")
+            end
+          '); then
+            echo "Reading the labels failed: failing closed, a review may be owed."
+            exit 1
+          fi
+          if [ -z "$response" ]; then
+            echo "The API returned nothing: failing closed, a review may be owed."
+            exit 1
+          fi
+          labels=${response#labels}
+          # A here-string, not a pipe: with `pipefail`, `grep -q` exiting early could make a
+          # `printf` on its left die of SIGPIPE and turn the result green while the label is on.
+          # The status is read explicitly: 0 means the label is on, 1 that it is not, and any
+          # other status is a `grep` failure, not an absent label.
+          status=0
+          grep -qxF 'needs/review' <<<"$labels" || status=$?
+          case $status in
+            0)
+              echo "needs/review is on: a review is owed before this can merge."
+              exit 1
+              ;;
+            1)
+              echo "No review owed."
+              ;;
+            *)
+              echo "Reading the labels failed (grep exited $status): failing closed."
+              exit 1
+              ;;
+          esac
