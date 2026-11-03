@@ -23,8 +23,9 @@ Rust 1.99 and a C linker.
 `init` asks which harness you open yourself, then which harness and model to use for a `worker`
 and a `reviewer` (or `no` to skip either). It finds each harness's install directory, writes
 the profiles, creates a private directory and an env file for each, and adds a line to your main
-harness's global instructions file so that it reads `dog-walker instructions` before it
-delegates. It shows what it will write and asks first. It never asks for, reads or writes a
+harness's instructions file so that it reads `dog-walker instructions` before it delegates. It
+asks whether that file is this project's (the default) or your global one. It shows what it will
+write and asks first. It never asks for, reads or writes a
 secret: it prints what is left to you (your key, a login), and you finish with:
 
     set -a; . ~/.config/dog-walker/worker.env; set +a

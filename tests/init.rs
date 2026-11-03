@@ -229,6 +229,8 @@ fn at31_the_instructions_line_is_added_once_and_the_file_is_kept() {
         "no",
         "--reviewer",
         "no",
+        "--scope",
+        "global",
         "--yes",
     ];
     assert_eq!(home.init(&args, "").status.code(), Some(0));
@@ -249,6 +251,68 @@ fn at31_the_instructions_line_is_added_once_and_the_file_is_kept() {
     );
 }
 
+// AT31 (R25): without a scope, `--yes` puts the line in the project's file and leaves the global
+// one alone.
+#[test]
+fn at31_the_line_goes_in_the_project_by_default() {
+    let home = Home::new("project");
+    home.all_harnesses();
+    fs::create_dir_all(home.path().join(".claude")).unwrap();
+    let global = home.path().join(".claude/CLAUDE.md");
+    fs::write(&global, "# mine\n").unwrap();
+    let out = home.init(
+        &[
+            "--main",
+            "claude",
+            "--worker",
+            "no",
+            "--reviewer",
+            "no",
+            "--yes",
+        ],
+        "",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = fs::read_to_string(home.path().join("CLAUDE.md")).unwrap();
+    assert!(project.contains(BLOCK), "{project}");
+    assert_eq!(fs::read_to_string(&global).unwrap(), "# mine\n");
+}
+
+// AT31 (R25): with no scope and no `--yes`, the installer asks, naming both files, and the
+// answer decides; a bad answer is asked again.
+#[test]
+fn at31_the_scope_is_asked() {
+    let home = Home::new("scopeask");
+    home.all_harnesses();
+    let out = home.init(
+        &["--main", "claude", "--worker", "no", "--reviewer", "no"],
+        "everywhere\nglobal\ny\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let said = stderr(&out);
+    assert!(said.contains("CLAUDE.md"), "{said}");
+    assert!(said.contains("is not a scope"), "{said}");
+    assert!(
+        fs::read_to_string(home.path().join(".claude/CLAUDE.md"))
+            .unwrap()
+            .contains(BLOCK)
+    );
+    assert!(!home.path().join("CLAUDE.md").exists());
+}
+
+// AT31 (R25): a harness with no instructions file is not asked where to put one.
+#[test]
+fn at31_a_harness_without_a_file_is_not_asked_for_a_scope() {
+    let home = Home::new("noscope");
+    home.all_harnesses();
+    let out = home.init(
+        &["--main", "pi", "--worker", "no", "--reviewer", "no"],
+        "y\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("scope:"), "{}", stderr(&out));
+}
+
 // AT31 (R25): Codex as the main harness gets its AGENTS.md.
 #[test]
 fn at31_codex_main_gets_its_agents_file() {
@@ -262,6 +326,8 @@ fn at31_codex_main_gets_its_agents_file() {
             "no",
             "--reviewer",
             "no",
+            "--scope",
+            "global",
             "--yes",
         ],
         "",
@@ -303,8 +369,9 @@ fn at31_pi_main_gets_the_line_printed() {
 fn at31_the_questions_can_be_answered_on_stdin() {
     let home = Home::new("ask");
     home.all_harnesses();
-    // main: harness, model; worker: harness, model, credential variable; reviewer: no; confirm.
-    let answers = "claude\n\npi\nopenrouter/z-ai/glm\nMY_KEY\nno\ny\n";
+    // main: harness, model; worker: harness, model, credential variable; reviewer: no; scope
+    // (the project, by an empty line); confirm.
+    let answers = "claude\n\npi\nopenrouter/z-ai/glm\nMY_KEY\nno\n\ny\n";
     let out = home.init(&[], answers);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let config = fs::read_to_string(home.config()).unwrap();
@@ -322,7 +389,7 @@ fn at31_nothing_is_written_without_a_yes() {
     home.all_harnesses();
     let out = home.init(
         &["--main", "claude", "--worker", "no", "--reviewer", "no"],
-        "n\n",
+        "project\nn\n",
     );
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     assert!(!home.config().exists());
@@ -382,8 +449,8 @@ fn at31_an_existing_config_is_never_changed() {
     assert_eq!(config.matches("[profiles.worker]").count(), 1, "{config}");
     assert!(config.contains("[profiles.reviewer]"), "{config}");
     // The instructions go to the existing main harness's file (Codex), not the new answer's.
-    assert!(home.path().join(".codex/AGENTS.md").exists());
-    assert!(!home.path().join(".claude/CLAUDE.md").exists());
+    assert!(home.path().join("AGENTS.md").exists());
+    assert!(!home.path().join("CLAUDE.md").exists());
 }
 
 // AT31 (R25): a harness that is not installed still gets a profile, with a note to add its
@@ -565,6 +632,8 @@ fn at31_a_linked_instructions_file_is_followed_and_named() {
             "no",
             "--reviewer",
             "no",
+            "--scope",
+            "global",
             "--yes",
         ],
         "",

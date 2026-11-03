@@ -48,6 +48,29 @@ pub struct Host {
     pub config_dir: PathBuf,
     /// The directories of `PATH`.
     pub path: Vec<PathBuf>,
+    /// The project the command runs in: where a project-scoped instructions file goes.
+    pub project: PathBuf,
+}
+
+/// Whose instructions file the dog-walker line goes into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The current project's file: only that project's sessions are told.
+    Project,
+    /// The main harness's global file: every project's sessions are told.
+    Global,
+}
+
+impl Scope {
+    pub fn parse(text: &str) -> Result<Scope, String> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "project" | "p" => Ok(Scope::Project),
+            "global" | "g" => Ok(Scope::Global),
+            other => Err(format!(
+                "`{other}` is not a scope: use `project` or `global`"
+            )),
+        }
+    }
 }
 
 /// The model suggested when the user does not name one.
@@ -402,13 +425,15 @@ pub fn read_existing(text: &str) -> Result<Existing, String> {
     Ok(existing)
 }
 
-/// The main harness's global instructions file, when dog-walker knows where it is. Pi and dsh
-/// have none that is verified, so they get the line printed instead.
-pub fn instructions_file(harness: Harness, host: &Host) -> Option<PathBuf> {
-    match harness {
-        Harness::Claude => Some(host.home.join(".claude").join("CLAUDE.md")),
-        Harness::Codex => Some(host.home.join(".codex").join("AGENTS.md")),
-        Harness::Pi | Harness::Dsh => None,
+/// The main harness's instructions file in `scope`, when dog-walker knows where it is. Pi and
+/// dsh have none that is verified, so they get the line printed instead.
+pub fn instructions_file(harness: Harness, scope: Scope, host: &Host) -> Option<PathBuf> {
+    match (harness, scope) {
+        (Harness::Claude, Scope::Global) => Some(host.home.join(".claude").join("CLAUDE.md")),
+        (Harness::Codex, Scope::Global) => Some(host.home.join(".codex").join("AGENTS.md")),
+        (Harness::Claude, Scope::Project) => Some(host.project.join("CLAUDE.md")),
+        (Harness::Codex, Scope::Project) => Some(host.project.join("AGENTS.md")),
+        (Harness::Pi | Harness::Dsh, _) => None,
     }
 }
 
@@ -437,6 +462,8 @@ pub struct Options {
     pub main: Option<String>,
     pub worker: Option<String>,
     pub reviewer: Option<String>,
+    /// `project` or `global`; asked when not given (and the project when `yes` skips asking).
+    pub scope: Option<String>,
     pub yes: bool,
 }
 
@@ -652,7 +679,8 @@ fn build(
     };
     plan.notes
         .extend(plan.profiles.iter().flat_map(|p| p.notes.clone()));
-    match instructions_file(main_harness, host) {
+    let scope = scope_for(main_harness, options, host, input, err)?;
+    match instructions_file(main_harness, scope, host) {
         Some(file) => {
             let current = match fs::read_to_string(&file) {
                 Ok(text) => text,
@@ -672,6 +700,47 @@ fn build(
         )),
     }
     Ok(plan)
+}
+
+/// Where the instructions line goes: from the command line, or asked, or the project when
+/// `--yes` says not to ask. Not asked for a harness with no file to write.
+fn scope_for(
+    harness: Harness,
+    options: &Options,
+    host: &Host,
+    input: &mut dyn BufRead,
+    err: &mut dyn Write,
+) -> Result<Scope, SetupError> {
+    if let Some(given) = &options.scope {
+        return Scope::parse(given).map_err(|why| SetupError::Answer {
+            role: "scope".to_owned(),
+            why,
+        });
+    }
+    let (Some(project), Some(global)) = (
+        instructions_file(harness, Scope::Project, host),
+        instructions_file(harness, Scope::Global, host),
+    ) else {
+        return Ok(Scope::Project);
+    };
+    if options.yes {
+        return Ok(Scope::Project);
+    }
+    output::line(
+        err,
+        &format!(
+            "the dog-walker line can go in this project's file ({}) or in your global one ({}), which tells every project",
+            project.display(),
+            global.display()
+        ),
+    )?;
+    loop {
+        let answer = ask(input, err, "scope: project or global", Some("project"))?;
+        match Scope::parse(&answer) {
+            Ok(scope) => return Ok(scope),
+            Err(why) => output::line(err, &why)?,
+        }
+    }
 }
 
 fn show(plan: &Plan, err: &mut dyn Write) -> Result<(), SetupError> {
@@ -911,6 +980,7 @@ mod tests {
             home: PathBuf::from("/home/u"),
             config_dir: PathBuf::from("/home/u/.config/dog-walker"),
             path: Vec::new(),
+            project: PathBuf::from("/work/app"),
         }
     }
 
@@ -1116,15 +1186,15 @@ mod tests {
     fn only_claude_and_codex_have_a_known_instructions_file() {
         let host = host();
         assert_eq!(
-            instructions_file(Harness::Claude, &host),
+            instructions_file(Harness::Claude, Scope::Global, &host),
             Some(PathBuf::from("/home/u/.claude/CLAUDE.md"))
         );
         assert_eq!(
-            instructions_file(Harness::Codex, &host),
+            instructions_file(Harness::Codex, Scope::Global, &host),
             Some(PathBuf::from("/home/u/.codex/AGENTS.md"))
         );
-        assert_eq!(instructions_file(Harness::Pi, &host), None);
-        assert_eq!(instructions_file(Harness::Dsh, &host), None);
+        assert_eq!(instructions_file(Harness::Pi, Scope::Global, &host), None);
+        assert_eq!(instructions_file(Harness::Dsh, Scope::Project, &host), None);
     }
 
     #[test]
