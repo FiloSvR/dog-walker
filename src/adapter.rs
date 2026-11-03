@@ -132,8 +132,11 @@ pub struct Dsh;
 
 impl Adapter for Dsh {
     fn argv(&self, profile: &Profile) -> Vec<OsString> {
-        let name = profile.dsh_profile.as_deref().unwrap_or("headless");
-        vec!["dsh".into(), name.into(), "--".into()]
+        let name = profile
+            .dsh_profile
+            .as_ref()
+            .map_or("headless", |name| name.as_str());
+        vec!["dsh".into(), "--profile".into(), name.into(), "--".into()]
     }
 
     fn env(&self) -> &'static [&'static str] {
@@ -340,13 +343,13 @@ mod tests {
     #[test]
     fn dsh_boots_its_profile_and_keeps_the_brief_positional() {
         let mut dsh = profile(Harness::Dsh, "deepseek");
-        dsh.dsh_profile = Some("headless".to_owned());
+        dsh.dsh_profile = Some(ProfileName::parse("rescue").unwrap());
         let printed: Vec<String> = argv(&dsh)
             .unwrap()
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(printed, ["dsh", "headless", "--"], "{printed:?}");
+        assert_eq!(printed, ["dsh", "--profile", "rescue", "--"], "{printed:?}");
         assert_eq!(env(&dsh), ["HOME"]);
         let full = with_brief(&argv(&dsh).unwrap(), "- fix it");
         assert_eq!(
@@ -356,7 +359,7 @@ mod tests {
         // Without the key, the shipped one-task profile is the default.
         let mut bare = profile(Harness::Dsh, "deepseek");
         bare.dsh_profile = None;
-        assert_eq!(argv(&bare).unwrap(), ["dsh", "headless", "--"]);
+        assert_eq!(argv(&bare).unwrap(), ["dsh", "--profile", "headless", "--"]);
     }
 
     #[test]

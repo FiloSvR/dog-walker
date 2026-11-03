@@ -87,7 +87,7 @@ pub struct Profile {
     /// Overrides the adapter's default command: an argv list.
     pub command: Option<Vec<String>>,
     /// The dsh profile to boot, when the harness is dsh: dsh's own model lives in it.
-    pub dsh_profile: Option<String>,
+    pub dsh_profile: Option<ProfileName>,
     pub main: bool,
     /// Network on (the default) or off inside the sandbox (D3).
     pub network: bool,
@@ -231,18 +231,27 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         .model
         .ok_or_else(|| fail("missing required field `model`".to_owned()))?;
     check_text("model", &model).map_err(fail)?;
-    if let Some(name) = &raw.dsh_profile {
-        check_text("dsh_profile", name).map_err(fail)?;
-        if let Err(reason) = ProfileName::parse(name) {
-            return Err(fail(format!("`dsh_profile` {reason}")));
+    let dsh_profile = match raw.dsh_profile {
+        None => None,
+        Some(name) => {
+            check_text("dsh_profile", &name).map_err(fail)?;
+            if name.starts_with('-') {
+                return Err(fail(
+                    "`dsh_profile` cannot start with `-`: dsh would read it as an option"
+                        .to_owned(),
+                ));
+            }
+            let name = ProfileName::parse(&name)
+                .map_err(|reason| fail(format!("`dsh_profile` {reason}")))?;
+            if harness != Harness::Dsh {
+                return Err(fail(
+                    "`dsh_profile` is only for `harness = \"dsh\"`: it names the dsh profile to boot"
+                        .to_owned(),
+                ));
+            }
+            Some(name)
         }
-        if harness != Harness::Dsh {
-            return Err(fail(
-                "`dsh_profile` is only for `harness = \"dsh\"`: it names the dsh profile to boot"
-                    .to_owned(),
-            ));
-        }
-    }
+    };
     if let Some(effort) = &raw.effort {
         check_text("effort", effort).map_err(fail)?;
         if effort.trim() == "-" {
@@ -288,7 +297,7 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         effort: raw.effort,
         timeout,
         command: raw.command,
-        dsh_profile: raw.dsh_profile,
+        dsh_profile,
         main: raw.main,
         network: sandbox.network,
         git_writable: sandbox.git_writable,
@@ -627,6 +636,38 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("read_only_dirs"), "{error}");
+    }
+
+    #[test]
+    fn a_dsh_profile_is_only_for_dsh_and_is_a_plain_name() {
+        let dsh = parse(
+            "[profiles.a]\nharness='dsh'\nmodel='deepseek'\nmain=true\ndsh_profile='rescue'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            dsh.profiles()[0]
+                .dsh_profile
+                .as_ref()
+                .map(ProfileName::as_str),
+            Some("rescue")
+        );
+        // The key defaults to the shipped one-task profile; it is the adapter's fallback.
+        let bare = parse("[profiles.a]\nharness='dsh'\nmodel='deepseek'\nmain=true\n").unwrap();
+        assert_eq!(bare.profiles()[0].dsh_profile, None);
+        for (extra, expected) in [
+            ("dsh_profile='rescue'", "only for"),
+            ("dsh_profile='-h'", "cannot start with"),
+            ("dsh_profile=''", "must not be empty"),
+            ("dsh_profile='bad name'", "dsh_profile"),
+        ] {
+            let text = if expected == "only for" {
+                format!("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\n{extra}\n")
+            } else {
+                format!("[profiles.a]\nharness='dsh'\nmodel='m'\nmain=true\n{extra}\n")
+            };
+            let error = parse(&text).unwrap_err();
+            assert!(error.to_string().contains(expected), "{extra}: {error}");
+        }
     }
 
     #[test]

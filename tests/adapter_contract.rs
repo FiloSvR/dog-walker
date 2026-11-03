@@ -1,8 +1,9 @@
 //! The shared adapter contract: every adapter is checked against a fake of its harness (R4).
 //!
 //! The contract is what an adapter must satisfy, whatever the harness: the program resolves,
-//! the argv names the profile's model, the brief is the last argument, the harness runs
-//! non-interactively (its stdin is closed), and its result reaches the handover. A fake
+//! the argv names the profile's model and effort (or, for dsh, the dsh profile it boots), the
+//! brief is the last argument, the harness runs non-interactively (its stdin is closed), and
+//! its result reaches the handover. A fake
 //! adapter written here passes the same helper, which is what "a new adapter with no core
 //! change" means.
 
@@ -402,7 +403,7 @@ fn at28_the_dsh_adapter_meets_the_contract() {
     let config = project.join("config.toml");
     fs::write(
         &config,
-        "[profiles.alpha]\nharness = \"dsh\"\nmodel = \"deepseek\"\ndsh_profile = \"headless\"\n\n\
+        "[profiles.alpha]\nharness = \"dsh\"\nmodel = \"deepseek\"\ndsh_profile = \"rescue\"\n\n\
          [profiles.main]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n",
     )
     .unwrap();
@@ -436,7 +437,10 @@ fn at28_the_dsh_adapter_meets_the_contract() {
     );
     let printed = fs::read_to_string(project.join("argv.txt")).unwrap();
     let recorded: Vec<&str> = printed.lines().collect();
-    assert_eq!(recorded.first().copied(), Some("headless"), "{printed}");
+    assert!(
+        recorded.windows(2).any(|w| w == ["--profile", "rescue"]),
+        "{printed}"
+    );
     assert_eq!(
         recorded.get(recorded.len() - 2).copied(),
         Some("--"),

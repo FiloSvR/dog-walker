@@ -117,7 +117,7 @@ pub enum OverrideError {
     Git { origin: String, value: String },
 }
 
-/// Why a harness could not be started: no command, and no adapter for it yet.
+/// Why a harness could not be started: its adapter returned no argv at all.
 #[derive(Debug, thiserror::Error)]
 pub enum AdapterError {
     #[error("the adapter for `{harness}` returned no argv at all")]

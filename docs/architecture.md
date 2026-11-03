@@ -163,7 +163,8 @@ refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit 
 `adapter` is the seam between a profile and how its harness is started (R4): a trait with
 `argv(&Profile)` and the names of the variables the harness needs. A profile's own `command`
 wins; otherwise `adapter::of(harness)` supplies the argv — every harness the core knows has
-one — and a profile that names a harness the core does not know is refused by the config. Adding an adapter for a harness the core already knows touches
+one — a profile that names a harness the core does not know is refused by the config, and a
+harness program that does not resolve is refused before a task exists. Adding an adapter for a harness the core already knows touches
 `adapter` and the contract test, nothing else; a new harness also needs its `Harness` variant.
 
 The launcher appends the brief with `adapter::with_brief`, so "the brief is the last argument"
@@ -173,8 +174,9 @@ with its own `command` does not get the adapter's names — it is not running th
 
 `tests/adapter_contract.rs` is the shared contract, run against a stub of the harness on
 `PATH` (through the real CLI) and against a fake adapter written in the test: the program
-resolves, the model and the effort reach the argv, the brief is exactly the last argument,
-stdin is closed so the harness cannot prompt, and the result reaches the handover.
+resolves, the model and the effort reach the argv (or, for dsh, the dsh profile it names), the
+brief is exactly the last argument, stdin is closed so the harness cannot prompt, and the
+result reaches the handover.
 
 The adapters are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`),
 Pi (`pi -p --no-session --model … [--thinking …] --`), Codex (`codex exec
