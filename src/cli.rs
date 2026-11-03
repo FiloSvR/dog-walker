@@ -18,6 +18,7 @@ use crate::handover::{self, Handover};
 use crate::launch::{self, End};
 use crate::output::{self, exit};
 use crate::sandbox::{self, Plan, Policy, Request};
+use crate::setup;
 use crate::slots;
 use crate::status::Status;
 use crate::task::{Task, TaskId};
@@ -80,6 +81,21 @@ enum Command {
         #[arg(long)]
         unsandboxed: bool,
     },
+    /// Set up profiles and tell the main harness about dog-walker, asking what it needs
+    Init {
+        /// The harness you open yourself, as `harness[:model]`
+        #[arg(long, value_name = "HARNESS[:MODEL]")]
+        main: Option<String>,
+        /// A secondary for tasks, as `harness[:model]`, or `no`
+        #[arg(long, value_name = "HARNESS[:MODEL]|no")]
+        worker: Option<String>,
+        /// A secondary for reviews, as `harness[:model]`, or `no`
+        #[arg(long, value_name = "HARNESS[:MODEL]|no")]
+        reviewer: Option<String>,
+        /// Write without asking to confirm
+        #[arg(long)]
+        yes: bool,
+    },
     /// Ask a running task to stop
     Cancel {
         /// The task id, the number in its folder name
@@ -136,6 +152,20 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             output::line(stdout, INSTRUCTIONS.trim_end())?;
             Ok(exit::SUCCESS)
         }
+        Command::Init {
+            main,
+            worker,
+            reviewer,
+            yes,
+        } => init(
+            cli,
+            main.as_deref(),
+            worker.as_deref(),
+            reviewer.as_deref(),
+            *yes,
+            stdout,
+            stderr,
+        ),
         Command::Profiles => {
             let config = load(cli)?;
             list(&config, stdout)?;
@@ -206,17 +236,59 @@ fn doctor(
     })
 }
 
-/// Reads the config the command line points at.
-fn load(cli: &Cli) -> Result<Config, ConfigError> {
-    let path = match &cli.config {
-        Some(path) => path.clone(),
+/// Where the config is: the command line's, or the default.
+fn config_path(cli: &Cli) -> Result<PathBuf, ConfigError> {
+    match &cli.config {
+        Some(path) => Ok(path.clone()),
         None => config::default_path(
             std::env::var_os("XDG_CONFIG_HOME"),
             std::env::var_os("HOME"),
         )
-        .ok_or(ConfigError::NoConfigPath)?,
+        .ok_or(ConfigError::NoConfigPath),
+    }
+}
+
+/// Reads the config the command line points at.
+fn load(cli: &Cli) -> Result<Config, ConfigError> {
+    Config::load(&config_path(cli)?)
+}
+
+/// `init` (D19): asks what the command line did not say, then writes the profiles and the
+/// main harness's instructions line.
+fn init(
+    cli: &Cli,
+    main: Option<&str>,
+    worker: Option<&str>,
+    reviewer: Option<&str>,
+    yes: bool,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<u8, Error> {
+    let path = config_path(cli)?;
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .ok_or(ConfigError::NoConfigPath)?;
+    let host = setup::Host {
+        home,
+        config_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
+        path: std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect(),
     };
-    Config::load(&path)
+    let options = setup::Options {
+        main: main.map(str::to_owned),
+        worker: worker.map(str::to_owned),
+        reviewer: reviewer.map(str::to_owned),
+        yes,
+    };
+    setup::run_init(
+        &options,
+        &path,
+        &host,
+        &mut io::stdin().lock(),
+        stdout,
+        stderr,
+    )?;
+    Ok(exit::SUCCESS)
 }
 
 /// One row per profile: name, harness, model, effort, role, separated by tabs.

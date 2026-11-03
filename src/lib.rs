@@ -13,6 +13,7 @@ pub mod handover;
 pub mod launch;
 pub mod output;
 pub mod sandbox;
+pub mod setup;
 pub mod slots;
 pub mod status;
 pub mod task;

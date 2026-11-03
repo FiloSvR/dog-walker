@@ -36,7 +36,7 @@ impl Harness {
         }
     }
 
-    fn parse(text: &str) -> Option<Harness> {
+    pub fn parse(text: &str) -> Option<Harness> {
         Harness::ALL
             .into_iter()
             .find(|harness| harness.as_str() == text)
