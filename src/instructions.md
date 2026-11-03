@@ -34,6 +34,19 @@ profile can cut the network (`network = false`) and make `.git` writable
 (`git = "writable"`). If bwrap is missing, `run` refuses; `--unsandboxed` runs without it and
 the handover says so.
 
+Several tasks can run at once. The user's config can limit them per harness and model with a
+top-level table:
+
+```toml
+[limits]
+"pi/local/qwen" = 1
+```
+
+A run over its limit waits for a slot, says so on stderr, and starts when one frees; while it
+waits it has a task folder and the status `created`, and `cancel <id>` or Ctrl-C ends it before
+it starts. With no limit, any number run. Two tasks running at once write the same project, so
+the second is warned with both ids.
+
 A task should not start tasks of its own: a `run` called from inside one is refused by the
 marker it gets (and, outside the sandbox, by the dog-walker above it in the process tree), and
 the task that called it is unaffected.

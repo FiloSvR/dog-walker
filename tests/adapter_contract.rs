@@ -17,7 +17,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use dog_walker::adapter::Adapter;
+use dog_walker::adapter::{self, Adapter};
 use dog_walker::config::{Harness, Profile, ProfileName};
 
 /// A fake adapter, to prove the seam is adapter-agnostic: it is not in the core's match at
@@ -26,11 +26,16 @@ struct FakeAdapter;
 
 impl Adapter for FakeAdapter {
     fn argv(&self, profile: &Profile) -> Vec<OsString> {
-        vec![
+        let mut argv = vec![
             OsString::from("fake-harness"),
             OsString::from("--model"),
             OsString::from(&profile.model),
-        ]
+        ];
+        if let Some(effort) = &profile.effort {
+            argv.push(OsString::from("--effort"));
+            argv.push(OsString::from(effort));
+        }
+        argv
     }
 }
 
@@ -67,8 +72,8 @@ fn stub(dir: &Path, program: &str) -> PathBuf {
     let path = dir.join(program);
     let script = format!(
         "#!/bin/sh\n\
-         echo \"$@\" > {dir}/argv.txt\n\
-         if read line; then echo open > {dir}/stdin.txt; else echo closed > {dir}/stdin.txt; fi\n\
+         printf '%s\\n' \"$@\" > {dir}/argv.txt\n\
+         if read -r -t 1 line; then echo open > {dir}/stdin.txt; else echo closed > {dir}/stdin.txt; fi\n\
          printf 'the fake %s wrote this\\n' \"$(basename \"$0\")\" > \"$DOG_WALKER_RESULT_PATH\"\n",
         dir = dir.display()
     );
@@ -77,31 +82,24 @@ fn stub(dir: &Path, program: &str) -> PathBuf {
     path
 }
 
-/// The contract, checked by running `adapter`'s argv against its stub: the model must reach
-/// the harness, the harness must not wait on stdin, and it must write a result.
+/// The contract, checked against a stub of the harness: the adapter's argv with the brief
+/// last (the launcher's own rule), the model and the effort in it, stdin closed, and a result.
 fn contract(adapter: &dyn Adapter, harness: Harness, dir: &Path) {
-    let profile = profile(harness, "claude-sonnet-4-5");
-    let argv = adapter.argv(&profile);
+    let mut profile = profile(harness, "claude-sonnet-4-5");
+    profile.effort = Some("high".to_owned());
+    let argv = adapter::with_brief(&adapter.argv(&profile), "the brief");
     assert!(!argv.is_empty(), "{harness:?}: an empty argv");
     let program = Path::new(&argv[0])
         .file_name()
         .unwrap_or_else(|| panic!("{harness:?}: the program is not a name"))
         .to_owned();
-    stub(dir, &program.to_string_lossy());
+    let stub = stub(dir, &program.to_string_lossy());
 
     let result = dir.join("result.md");
-    let mut child = Command::new(&argv[0])
+    let mut child = Command::new(&stub)
         .args(&argv[1..])
         .current_dir(dir)
         .env("DOG_WALKER_RESULT_PATH", &result)
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                dir.display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
         .stdin(Stdio::piped())
         .spawn()
         .unwrap_or_else(|error| panic!("{harness:?}: the stub does not start: {error}"));
@@ -109,10 +107,17 @@ fn contract(adapter: &dyn Adapter, harness: Harness, dir: &Path) {
     assert!(child.wait().unwrap().success(), "{harness:?}: the stub");
 
     let printed = fs::read_to_string(dir.join("argv.txt")).unwrap();
+    let recorded: Vec<&str> = printed.lines().collect();
     assert!(
-        printed.contains("claude-sonnet-4-5"),
-        "{harness:?}: no model in the argv: {printed}"
+        recorded.contains(&"claude-sonnet-4-5"),
+        "{harness:?}: no model: {printed}"
     );
+    assert!(
+        recorded.contains(&"high"),
+        "{harness:?}: no effort: {printed}"
+    );
+    // The brief is exactly the last argument, and one argument.
+    assert_eq!(recorded.last().copied(), Some("the brief"), "{printed}");
     assert_eq!(
         fs::read_to_string(dir.join("stdin.txt")).unwrap().trim(),
         "closed",
@@ -130,7 +135,8 @@ fn at28_the_claude_code_adapter_meets_the_contract() {
     let config = project.join("config.toml");
     fs::write(
         &config,
-        "[profiles.alpha]\nharness = \"claude\"\nmodel = \"claude-sonnet-4-5\"\n\n\
+        "[profiles.alpha]\nharness = \"claude\"\nmodel = \"claude-sonnet-4-5\"\n\
+         effort = \"high\"\n\n\
          [profiles.main]\nharness = \"pi\"\nmodel = \"m\"\nmain = true\n",
     )
     .unwrap();
@@ -170,9 +176,19 @@ fn at28_the_claude_code_adapter_meets_the_contract() {
         "{handover}"
     );
     let printed = fs::read_to_string(project.join("argv.txt")).unwrap();
-    assert!(printed.contains("-p"), "{printed}");
-    assert!(printed.contains("--model claude-sonnet-4-5"), "{printed}");
-    assert!(printed.trim_end().ends_with("the brief"), "{printed}");
+    let recorded: Vec<&str> = printed.lines().collect();
+    assert!(recorded.contains(&"-p"), "{printed}");
+    assert!(
+        recorded.contains(&"--dangerously-skip-permissions"),
+        "{printed}"
+    );
+    assert!(
+        recorded
+            .windows(2)
+            .any(|w| w == ["--model", "claude-sonnet-4-5"]),
+        "{printed}"
+    );
+    assert_eq!(recorded.last().copied(), Some("the brief"), "{printed}");
     assert_eq!(
         fs::read_to_string(project.join("stdin.txt"))
             .unwrap()
@@ -182,17 +198,52 @@ fn at28_the_claude_code_adapter_meets_the_contract() {
     fs::remove_dir_all(&project).unwrap();
 }
 
-// AT28 (R4): a new adapter needs no core change — the same contract holds it, and it is not in
+// AT5 (R4): a new adapter needs no core change — the same contract holds it, and it is not in
 // the core's list of harnesses at all.
 #[test]
-fn at28_a_fake_adapter_meets_the_contract_without_a_core_change() {
+fn at5_a_fake_adapter_meets_the_contract_without_a_core_change() {
     contract(&FakeAdapter, Harness::Pi, &dir("fake"));
 }
 
-// AT28 (R4): a harness whose adapter is not written yet says so, and names the profile.
+// AT5 (R4): no adapter and no dependency speaks ACP in v1.
 #[test]
-fn at28_a_harness_without_an_adapter_says_so() {
-    let error = dog_walker::adapter::argv(&profile(Harness::Pi, "local/qwen")).unwrap_err();
-    assert!(error.to_string().contains("`pi`"), "{error}");
-    assert!(error.to_string().contains("not written yet"), "{error}");
+fn at5_nothing_speaks_acp() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lock = fs::read_to_string(root.join("Cargo.lock")).unwrap();
+    for forbidden in ["agent-client-protocol", "acp-", "/acp"] {
+        assert!(!lock.contains(forbidden), "{forbidden} is in Cargo.lock");
+    }
+    let deny = fs::read_to_string(root.join("deny.toml")).unwrap();
+    assert!(!deny.to_lowercase().contains("acp"), "{deny}");
+}
+
+// AT28 (R4): a harness whose adapter is not written yet is refused before a task exists.
+#[test]
+fn at28_a_harness_without_an_adapter_is_refused_before_a_task() {
+    let project = dir("no-adapter");
+    let config = project.join("config.toml");
+    fs::write(
+        &config,
+        "[profiles.alpha]\nharness = \"pi\"\nmodel = \"local/qwen\"\n\n\
+         [profiles.main]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
+        .arg("--config")
+        .arg(&config)
+        .args(["run", "alpha", "the brief", "--unsandboxed"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("`pi`") && err.contains("not written yet"),
+        "{err}"
+    );
+    assert!(
+        !project.join(".dog-walker").exists(),
+        "a task folder was made"
+    );
+    fs::remove_dir_all(&project).unwrap();
 }

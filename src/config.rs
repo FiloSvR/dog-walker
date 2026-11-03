@@ -104,6 +104,8 @@ pub struct Profile {
 pub struct Config {
     /// The main profile first, then the others by name.
     profiles: Vec<Profile>,
+    /// How many tasks of a harness and model may run at once, keyed `harness/model`.
+    limits: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +113,8 @@ pub struct Config {
 struct RawConfig {
     #[serde(default)]
     profiles: BTreeMap<String, RawProfile>,
+    #[serde(default)]
+    limits: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -173,12 +177,33 @@ impl Config {
         // `false` sorts before `true`, so negate to put the main profile first;
         // the sort is stable, so the others stay in name order.
         profiles.sort_by_key(|profile| !profile.main);
-        Ok(Config { profiles })
+        for (key, limit) in &raw.limits {
+            let Some((harness, model)) = key.split_once('/') else {
+                return Err(ConfigError::LimitKey { key: key.clone() });
+            };
+            if harness.is_empty() || model.is_empty() || Harness::parse(harness).is_none() {
+                return Err(ConfigError::LimitKey { key: key.clone() });
+            }
+            if *limit == 0 {
+                return Err(ConfigError::LimitZero { key: key.clone() });
+            }
+        }
+        Ok(Config {
+            profiles,
+            limits: raw.limits,
+        })
     }
 
     /// The profiles, the main one first.
     pub fn profiles(&self) -> &[Profile] {
         &self.profiles
+    }
+
+    /// How many tasks of this profile's harness and model may run at once, when a limit is
+    /// configured: absent means as many as the user starts.
+    pub fn limit(&self, profile: &Profile) -> Option<usize> {
+        let key = format!("{}/{}", profile.harness.as_str(), profile.model);
+        self.limits.get(&key).copied()
     }
 }
 
@@ -586,6 +611,40 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("read_only_dirs"), "{error}");
+    }
+
+    #[test]
+    fn a_limit_is_per_harness_and_model() {
+        let config = parse(
+            "[profiles.a]\nharness='pi'\nmodel='local/qwen'\nmain=true\n\n\
+             [limits]\n'pi/local/qwen' = 2\n'claude/m' = 1\n",
+        )
+        .unwrap();
+        assert_eq!(config.limit(&config.profiles()[0]), Some(2));
+        // Another harness, or another model of the same harness, is not covered.
+        let other = parse("[profiles.a]\nharness='pi'\nmodel='other'\nmain=true\n").unwrap();
+        assert_eq!(other.limit(&other.profiles()[0]), None);
+        let unset = parse(
+            "[profiles.a]\nharness='pi'\nmodel='local/qwen'\nmain=true\n\n[limits]\n'pi/x' = 1\n",
+        )
+        .unwrap();
+        assert_eq!(unset.limit(&unset.profiles()[0]), None);
+    }
+
+    #[test]
+    fn a_bad_limit_is_rejected_by_name() {
+        for (limits, expected) in [
+            ("'pi' = 1", "limits"),
+            ("'pi/' = 1", "limits"),
+            ("'bogus/x' = 1", "limits"),
+            ("'pi/m' = 0", "0"),
+        ] {
+            let error = parse(&format!(
+                "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\n\n[limits]\n{limits}\n"
+            ))
+            .unwrap_err();
+            assert!(error.to_string().contains(expected), "{limits}: {error}");
+        }
     }
 
     #[test]

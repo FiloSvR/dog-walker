@@ -20,6 +20,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 | `launch` | Starting the harness, waiting, and ending its process group (R5, R14) | built (#16, #5) |
 | `sandbox` | The bwrap command, the profile's policy, and what the handover records (R15-R17, R20) | built (#4) |
 | `adapter` | The seam between a profile and its harness's argv (R4) | built (#10) |
+| `slots` | The run records, the per harness and model limit, and the overlap warning (R9) | built (#7) |
 
 Invariants, each with the test that checks it:
 
@@ -27,7 +28,7 @@ Invariants, each with the test that checks it:
 - Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()`, or importing them `as` another name, anywhere but `src/main.rs`; the top-level `src/output.rs` and `src/main.rs` are exempt, and `src/handover.rs`, `src/launch.rs` (the log rewrite) and `src/slots.rs` (the run records) may use `write_all` on the files they own, checked by `the_exemptions_are_exact_paths`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
 - A row of `profiles` can always be split: `model` and `effort` hold no control, line-separator or bidirectional-control characters (U+2028, U+2029, U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), and `-` means no effort: `at2_unprintable_or_reserved_values_are_rejected`, `profiles_rows_have_fixed_columns`.
 - No networking or async-runtime crate is a dependency (R19): `deny.toml` bans them (the one list), and `at24_no_networking_crates_in_lockfile` reads that list.
-- A task's status moves `created`, `running`, then exactly one end state, and an end never changes: `created_becomes_running_and_nothing_else_does`, `only_a_running_task_can_end`, `an_end_state_cannot_be_an_end_of_itself` in `src/status.rs`.
+- A task's status moves `created`, `running`, then exactly one end state, and an end never changes; the one exception is a task cancelled while it waits for a slot, which goes `created` to `cancelled` and never runs: `created_becomes_running_and_nothing_else_does`, `a_created_task_can_be_cancelled_before_it_starts`, `only_a_running_task_can_end`, `an_end_state_cannot_be_an_end_of_itself` in `src/status.rs`.
 - Task ids are zero-padded counters that are never handed out twice: `folders_are_numbered_in_order_and_are_private`, `the_next_id_follows_the_highest_marker`, `concurrent_creations_never_share_an_id`, `an_id_is_not_reused_after_its_folder_goes`, `at13_ids_are_counters_and_gitignore_is_untouched`.
 - The handover's front matter is TOML, and its brief and result survive an edit by the harness: `front_matter_is_toml`, `at14_the_handover_is_complete_before_the_harness_starts`, `at15_a_status_edited_by_the_harness_is_overwritten`.
 
@@ -65,8 +66,9 @@ regular file, so a link or a pipe there is refused, not read (`at16_a_symlinked_
 
 ## The harness environment
 
-The harness is the profile's `command`, an argv list with the brief appended as its last
-argument, started in the project directory, with stdin closed and its output in `harness.log`.
+The harness is the profile's `command` or its harness's adapter argv (see "Adapters"), an argv
+list with the brief appended as its last argument, started in the project directory, with
+stdin closed and its output in `harness.log`.
 It reads, from the environment:
 
 - `DOG_WALKER_TASK_DIR`, `DOG_WALKER_HANDOVER_PATH`, `DOG_WALKER_RESULT_PATH`, `DOG_WALKER_TASK_ID`;
@@ -81,13 +83,13 @@ visible there and only the marker holds; a harness that clears the variable and 
 dog-walker binary can still delegate (D12). A profile's `command` is the argv to run; without
 one, its harness's adapter builds the argv (R4), and a harness whose adapter is not written yet
 names the profile and says so before a task exists. Inside the sandbox the
-environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the
-sandbox it is inherited, and the handover says so. A profile can also name the variables whose
+environment is cleared and rebuilt from the policy's names (the profile's `env` and its
+adapter's) plus `PATH`; without the sandbox it is inherited, and the handover says so. A profile can also name the variables whose
 values are secrets (`secrets`): those values are replaced with `[redacted]` in the handover and
 in `harness.log` once the run ends (R18), and the handover lists the names, never the values.
 
-Checks: `at1_*`, `at6_*`, `at7_*`, `at9_a_task_cannot_start_tasks`,
-`at16_a_harness_that_cannot_start_fails_the_task`, `at23_*`. A
+Checks: `at1_*`, `at5_*`, `at6_*`, `at7_*`, `at9_a_task_cannot_start_tasks`,
+`at16_a_harness_that_cannot_start_fails_the_task`, `at23_*`, `at28_*`. A
 harness that ends with a non-zero status is a failed task, even when it left a result
 (`at16_a_nonzero_exit_is_a_failure`), and the handover path is printed as soon as the handover
 exists, so a failure to write the end state still leaves it on stdout
@@ -154,6 +156,55 @@ run), `at4_a_project_config_that_loosens_is_named`, `at4_a_project_config_cannot
 refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit tests
 `a_request_may_tighten_and_is_named_when_it_loosens` and
 `a_read_only_directory_inside_the_project_can_be_added_but_not_dropped` in `src/sandbox.rs`.
+
+## Adapters
+
+`adapter` is the seam between a profile and how its harness is started (R4): a trait with
+`argv(&Profile)` and the names of the variables the harness needs. A profile's own `command`
+wins; otherwise `adapter::of(harness)` supplies the argv, and a harness with no adapter says so
+by name, before a task exists. Adding an adapter for a harness the core already knows touches
+`adapter` and the contract test, nothing else; a new harness also needs its `Harness` variant.
+
+The launcher appends the brief with `adapter::with_brief`, so "the brief is the last argument"
+is one rule, and it resolves the program once: the check and the run use the same absolute
+path. The environment is the profile's names plus the adapter's, deduplicated, and a profile
+with its own `command` does not get the adapter's names — it is not running the adapter.
+
+`tests/adapter_contract.rs` is the shared contract, run against a stub of the harness on
+`PATH` (through the real CLI) and against a fake adapter written in the test: the program
+resolves, the model and the effort reach the argv, the brief is exactly the last argument,
+stdin is closed so the harness cannot prompt, and the result reaches the handover.
+
+Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
+`at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`,
+`at28_a_harness_without_an_adapter_is_refused_before_a_task`, and the unit tests in
+`src/adapter.rs`.
+
+## Concurrency
+
+Every `run` writes a record to `.dog-walker/run/<id>.slot` (id, runner's pid, its start time,
+harness, model) before it starts its harness, and removes it when it ends; a record whose
+runner is gone — the pid is gone, or it belongs to another process now — is stale, and the
+next runner that sees one removes it. The record is written through a temporary file, so a
+reader never sees a partial one, and the directory is mounted read-only inside the sandbox: a
+harness cannot add, remove or block the next run through it.
+
+The user's config can set `[limits]` per `harness/model` (`"pi/local/qwen" = 1`); a runner over
+its limit waits for a record to go, logs that it is waiting when it starts to, and starts as
+soon as one does. With no limit, as many tasks run as the user starts. The count is advisory:
+two runners can see the same free slot and both start, which is enough for a limit that queues
+best effort rather than schedules. While it waits, a task keeps its folder and the status
+`created`; a cancel (the marker, Ctrl-C or SIGTERM) ends it as `cancelled` before its harness
+ever runs, and its timeout starts when it does.
+
+Every task writes the project, so any two live tasks have overlapping write scopes. A run that
+starts while it can see another record logs `warning: task <id> overlaps task <other>'s write
+scope (the project)`, naming both ids; two runners that read before either writes miss it.
+
+Checks: `at10_three_tasks_run_at_once`, `at11_a_limit_queues_the_second_task`,
+`at11_a_queued_task_can_be_cancelled`, `at11_the_run_records_are_read_only_in_the_sandbox`, `at11_a_planted_record_is_not_a_slot`,
+`at11_a_symlinked_run_directory_is_refused`, `at12_an_overlap_is_warned_about_by_id`, and the
+unit tests in `src/slots.rs`.
 
 ## Stopping a task
 

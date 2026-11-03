@@ -20,17 +20,36 @@ pub trait Adapter {
     }
 }
 
-/// Claude Code, run unattended: `claude -p --model <model> <brief>`.
+/// Claude Code, run unattended: `claude -p --model <model> [--effort <effort>] -- <brief>`.
+///
+/// `-p` alone starts in Manual mode, which denies the edits and commands a task needs; the
+/// sandbox is the boundary here (D2), so the harness is told to skip its own permission checks.
 pub struct ClaudeCode;
 
 impl Adapter for ClaudeCode {
     fn argv(&self, profile: &Profile) -> Vec<OsString> {
-        let mut argv: Vec<OsString> = vec!["claude".into(), "-p".into()];
+        let mut argv: Vec<OsString> = vec![
+            "claude".into(),
+            "-p".into(),
+            "--dangerously-skip-permissions".into(),
+        ];
         if !profile.model.is_empty() {
             argv.push("--model".into());
             argv.push(profile.model.clone().into());
         }
+        if let Some(effort) = &profile.effort {
+            argv.push("--effort".into());
+            argv.push(effort.clone().into());
+        }
+        // The brief is positional: `--` keeps a brief that starts with `-` a brief.
+        argv.push("--".into());
         argv
+    }
+
+    fn env(&self) -> &'static [&'static str] {
+        // Claude Code reads its key from the environment; its config directory is the
+        // profile's to list.
+        &["ANTHROPIC_API_KEY"]
     }
 }
 
@@ -60,22 +79,37 @@ pub fn argv(profile: &Profile) -> Result<Vec<OsString>, AdapterError> {
     let adapter = of(profile.harness).ok_or_else(missing)?;
     let argv = adapter.argv(profile);
     if argv.is_empty() {
-        return Err(missing());
+        return Err(AdapterError::Empty {
+            harness: profile.harness,
+        });
     }
     Ok(argv)
 }
 
+/// The argv the launcher runs: the harness's argv with the brief last. One rule, used by the
+/// launcher for a profile's `command` and for an adapter's argv alike.
+pub fn with_brief(argv: &[OsString], brief: &str) -> Vec<OsString> {
+    let mut argv = argv.to_vec();
+    argv.push(brief.into());
+    argv
+}
+
 /// The variables a profile's harness needs by name: its adapter's, and the profile's own.
+/// A profile with its own `command` is not running the adapter, so only its own names count.
 pub fn env(profile: &Profile) -> Vec<String> {
-    let mut names = of(profile.harness)
-        .map(|adapter| {
-            adapter
-                .env()
-                .iter()
-                .map(|name| (*name).to_owned())
-                .collect::<Vec<String>>()
-        })
-        .unwrap_or_default();
+    let mut names: Vec<String> = if profile.command.as_ref().is_some_and(|c| !c.is_empty()) {
+        Vec::new()
+    } else {
+        of(profile.harness)
+            .map(|adapter| {
+                adapter
+                    .env()
+                    .iter()
+                    .map(|name| (*name).to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     for name in &profile.env {
         if !names.contains(name) {
             names.push(name.clone());
@@ -110,16 +144,39 @@ mod tests {
 
     #[test]
     fn claude_code_runs_wired_for_unattended_use() {
-        let argv = argv(&profile(Harness::Claude, "claude-sonnet-4-5")).unwrap();
-        let argv: Vec<String> = argv
+        let raw = argv(&profile(Harness::Claude, "claude-sonnet-4-5")).unwrap();
+        let printed: Vec<String> = raw
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         assert_eq!(
-            argv,
-            ["claude", "-p", "--model", "claude-sonnet-4-5"],
-            "{argv:?}"
+            printed,
+            [
+                "claude",
+                "-p",
+                "--dangerously-skip-permissions",
+                "--model",
+                "claude-sonnet-4-5",
+                "--"
+            ],
+            "{printed:?}"
         );
+        // The effort is a flag too.
+        let mut high = profile(Harness::Claude, "m");
+        high.effort = Some("high".to_owned());
+        let printed: Vec<String> = argv(&high)
+            .unwrap()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            printed.windows(2).any(|w| w == ["--effort", "high"]),
+            "{printed:?}"
+        );
+        // The brief goes after the `--`, so one that starts with a dash is still a brief.
+        let full = with_brief(&argv(&high).unwrap(), "- fix it");
+        let last = full.last().unwrap().to_string_lossy().into_owned();
+        assert_eq!(last, "- fix it");
     }
 
     #[test]
@@ -141,6 +198,12 @@ mod tests {
     fn the_variables_of_the_adapter_and_the_profile_both_count() {
         let mut profile = profile(Harness::Claude, "m");
         profile.env = vec!["HOME".to_owned()];
-        assert_eq!(env(&profile), ["HOME"]);
+        // The adapter's own names come first, then the profile's; a name in both is one name.
+        assert_eq!(env(&profile), ["ANTHROPIC_API_KEY", "HOME"]);
+        profile.env = vec!["ANTHROPIC_API_KEY".to_owned(), "HOME".to_owned()];
+        assert_eq!(env(&profile), ["ANTHROPIC_API_KEY", "HOME"]);
+        // A profile with its own `command` is not running the adapter: only its own names.
+        profile.command = Some(vec!["/bin/echo".to_owned()]);
+        assert_eq!(env(&profile), ["ANTHROPIC_API_KEY", "HOME"]);
     }
 }

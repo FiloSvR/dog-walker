@@ -490,9 +490,11 @@ impl Plan {
     /// executable, and, when sandboxed, the variables the profile lists are set.
     pub fn check(&self, profile: &Profile, project: &Path) -> Result<(), SandboxError> {
         let argv = crate::adapter::argv(profile)?;
-        let (program, _) = argv.split_first().ok_or_else(|| SandboxError::NoCommand {
-            profile: profile.name.to_string(),
-        })?;
+        let Some((program, _)) = argv.split_first() else {
+            return Err(SandboxError::Adapter(crate::error::AdapterError::Empty {
+                harness: profile.harness,
+            }));
+        };
         resolve_program(program, project)?;
         if self.sandboxed {
             self.env()?;
@@ -510,29 +512,32 @@ impl Plan {
         extra: &[(OsString, OsString)],
         handover: &Path,
     ) -> Result<Command, SandboxError> {
-        let argv = crate::adapter::argv(profile)?;
-        let (program, arguments) = argv.split_first().ok_or_else(|| SandboxError::NoCommand {
-            profile: profile.name.to_string(),
-        })?;
+        let argv = crate::adapter::with_brief(&crate::adapter::argv(profile)?, prompt);
+        let Some((program, arguments)) = argv.split_first() else {
+            return Err(SandboxError::Adapter(crate::error::AdapterError::Empty {
+                harness: profile.harness,
+            }));
+        };
+        // The program the check resolved is the program that runs, sandboxed or not.
+        let program = resolve_program(program, project)?;
         if !self.sandboxed {
-            let mut command = Command::new(program);
+            let mut command = Command::new(&program);
             // An inherited `DOG_WALKER_EFFORT` must not survive a profile without one; the
             // task's own variables are applied after, so this cannot remove its value.
             command.env_remove(crate::launch::EFFORT);
-            command.args(arguments).arg(prompt);
+            command.args(arguments);
             for (name, value) in extra {
                 command.env(name, value);
             }
             return Ok(command);
         }
-        let program = resolve_program(program, project)?;
         let bwrap = self.bwrap.as_ref().ok_or(SandboxError::NoTool)?;
         // No environment of the runner's: with a PID namespace of its own, bwrap is PID 1 and
         // the harness could read `/proc/1/environ`.
         let mut command = Command::new(bwrap);
         command.env_clear();
         self.sandbox_args(&mut command, project, &program, extra, handover)?;
-        command.arg(&program).args(arguments).arg(prompt);
+        command.arg(&program).args(arguments);
         Ok(command)
     }
 
@@ -584,6 +589,12 @@ impl Plan {
             && fs::canonicalize(&git).is_ok_and(|target| target.starts_with(project))
         {
             command.arg("--ro-bind").arg(&git).arg(&git);
+        }
+        // The run records belong to the runner: a harness that could write one could block
+        // the next run (R9).
+        let records = project.join(".dog-walker").join("run");
+        if records.is_dir() {
+            command.arg("--ro-bind").arg(&records).arg(&records);
         }
         // The handover belongs to dog-walker: the harness may read it, not rewrite its status
         // or brief (R10, R12).
@@ -948,7 +959,12 @@ mod tests {
         let command = plan
             .command(&profile, &project, "the brief", &[], Path::new("/none"))
             .unwrap();
-        assert_eq!(command.get_program(), "/bin/echo");
+        // The program is the resolved one: /bin/echo is a link to the shell's echo.
+        assert!(
+            command.get_program().to_string_lossy().ends_with("/echo"),
+            "{:?}",
+            command.get_program()
+        );
         let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
         assert_eq!(args, ["the brief"]);
     }

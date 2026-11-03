@@ -1,6 +1,7 @@
 //! Starting a secondary harness, waiting for it, and ending it on time or on request (R5, R14).
 //!
-//! The harness is the profile's `command`: an argv list that dog-walker appends the brief to.
+//! The harness is the profile's `command` or its adapter's argv: a list dog-walker appends the
+//! brief to.
 //! The task folder, the handover path, the result path, the profile, the model and the effort
 //! reach it in the environment, so an adapter's command line and an argv list a user writes
 //! both work without anything being spliced into a shell string.
@@ -371,7 +372,7 @@ pub fn watch_for_interrupts() -> Result<(), LaunchError> {
 }
 
 /// Whether Ctrl-C (or a TERM to the runner) has arrived.
-fn interrupted() -> bool {
+pub fn interrupted() -> bool {
     INTERRUPTED
         .get()
         .is_some_and(|flag| flag.load(Ordering::Relaxed))
