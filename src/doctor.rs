@@ -52,7 +52,16 @@ fn fail<E: std::fmt::Display>(error: &E) -> Outcome {
 }
 
 /// Runs every check for `profile` in `project`, reporting all of them.
-pub fn diagnose(profile: &Profile, project: &Path, url: &str, unsandboxed: bool) -> Vec<Check> {
+///
+/// `env_file` is the profile's env file when there is one, so that the fix for an unset variable
+/// names it.
+pub fn diagnose(
+    profile: &Profile,
+    project: &Path,
+    url: &str,
+    unsandboxed: bool,
+    env_file: Option<&Path>,
+) -> Vec<Check> {
     let mut checks = Vec::new();
     let policy = if unsandboxed {
         Policy::as_written(profile)
@@ -94,8 +103,17 @@ pub fn diagnose(profile: &Profile, project: &Path, url: &str, unsandboxed: bool)
         if unset.is_empty() {
             Outcome::Ok
         } else {
+            let fix = env_file.map_or_else(
+                || "export them (source the profile's env file)".to_owned(),
+                |file| {
+                    format!(
+                        "run `set -a; . {}; set +a` in this shell",
+                        crate::setup::shell_quote(&file.display().to_string())
+                    )
+                },
+            );
             Outcome::Fail(format!(
-                "not set in this shell: {}; export them (source the profile's env file) before running",
+                "not set in this shell: {}; {fix} before running",
                 unset.join(", ")
             ))
         },

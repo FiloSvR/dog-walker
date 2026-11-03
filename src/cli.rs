@@ -229,7 +229,12 @@ fn doctor(
     let project =
         fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
             .map_err(|source| CliError::Project { source })?;
-    let checks = crate::doctor::diagnose(profile, &project, url, unsandboxed);
+    // The env file `init` made sits beside the config; the fix for an unset variable names it.
+    let env_file = config_path(cli)?
+        .parent()
+        .map(|dir| dir.join(format!("{}.env", profile.name)))
+        .filter(|file| file.is_file());
+    let checks = crate::doctor::diagnose(profile, &project, url, unsandboxed, env_file.as_deref());
     for check in &checks {
         output::line(stdout, &check.line())?;
     }
