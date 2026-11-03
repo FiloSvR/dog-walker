@@ -107,7 +107,8 @@ of landing in an empty directory. The harness runs in a PID namespace of its own
 processes are invisible, and nothing it detaches outlives the sandbox. The sandbox's `/dev` is
 its own small, writable device directory, never the host's. `.git` is mounted read-only unless
 the profile says `git = "writable"` (D6); the network is there unless `network = false` cuts it
-(D3); the environment is cleared and rebuilt from the profile's `env` names plus `PATH`.
+(D3); the environment is cleared and rebuilt from the policy's `env` names (the profile's and its
+adapter's) plus `PATH`.
 
 The policy reaches the handover as a `## Sandbox` section: the tool, the network setting, the
 git mode, the directories and the variable names (R20). A denial is an `EROFS` or `EACCES` in

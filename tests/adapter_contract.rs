@@ -16,6 +16,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use dog_walker::adapter::{self, Adapter};
 use dog_walker::config::{Harness, Profile, ProfileName};
@@ -71,9 +72,13 @@ fn dir(name: &str) -> PathBuf {
 fn stub(dir: &Path, program: &str) -> PathBuf {
     let path = dir.join(program);
     let script = format!(
-        "#!/bin/sh\n\
+        "#!/usr/bin/env bash\n\
          printf '%s\\n' \"$@\" > {dir}/argv.txt\n\
-         if read -r -t 1 line; then echo open > {dir}/stdin.txt; else echo closed > {dir}/stdin.txt; fi\n\
+         read -r -t 1 line\n\
+         status=$?\n\
+         if [ \"$status\" -eq 0 ]; then echo open > {dir}/stdin.txt; \
+         elif [ \"$status\" -gt 128 ]; then echo timeout > {dir}/stdin.txt; \
+         else echo closed > {dir}/stdin.txt; fi\n\
          printf 'the fake %s wrote this\\n' \"$(basename \"$0\")\" > \"$DOG_WALKER_RESULT_PATH\"\n",
         dir = dir.display()
     );
@@ -96,13 +101,28 @@ fn contract(adapter: &dyn Adapter, harness: Harness, dir: &Path) {
     let stub = stub(dir, &program.to_string_lossy());
 
     let result = dir.join("result.md");
-    let mut child = Command::new(&stub)
-        .args(&argv[1..])
-        .current_dir(dir)
-        .env("DOG_WALKER_RESULT_PATH", &result)
-        .stdin(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|error| panic!("{harness:?}: the stub does not start: {error}"));
+    // A sibling test can fork while this stub is open for writing: the same `ETXTBSY` the
+    // launcher retries.
+    let mut spawned = None;
+    for _ in 0..5 {
+        match Command::new(&stub)
+            .args(&argv[1..])
+            .current_dir(dir)
+            .env("DOG_WALKER_RESULT_PATH", &result)
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => {
+                spawned = Some(child);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("{harness:?}: the stub does not start: {error}"),
+        }
+    }
+    let mut child = spawned.unwrap_or_else(|| panic!("{harness:?}: the stub stays busy"));
     drop(child.stdin.take());
     assert!(child.wait().unwrap().success(), "{harness:?}: the stub");
 
@@ -141,7 +161,9 @@ fn at28_the_claude_code_adapter_meets_the_contract() {
     )
     .unwrap();
     stub(&project, "claude");
-    let out = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
+    // An open stdin pipe, held for the run: if the launcher fails to close it for the
+    // harness, the stub reports `timeout` rather than a closed pipe.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
         .arg("--config")
         .arg(&config)
         .args(["run", "alpha", "the brief", "--unsandboxed"])
@@ -154,8 +176,14 @@ fn at28_the_claude_code_adapter_meets_the_contract() {
                 std::env::var("PATH").unwrap_or_default()
             ),
         )
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    let held = child.stdin.take();
+    let out = child.wait_with_output().unwrap();
+    drop(held);
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -193,7 +221,8 @@ fn at28_the_claude_code_adapter_meets_the_contract() {
         fs::read_to_string(project.join("stdin.txt"))
             .unwrap()
             .trim(),
-        "closed"
+        "closed",
+        "the launcher left the harness a stdin it could read"
     );
     fs::remove_dir_all(&project).unwrap();
 }

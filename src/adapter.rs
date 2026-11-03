@@ -1,8 +1,8 @@
 //! Adapters: how each harness is started, behind one seam (R4).
 //!
 //! A profile that sets `command` runs exactly that argv; a profile that does not asks its
-//! harness's adapter. Adding a harness touches this module and nothing else: the launcher and
-//! the sandbox only ever see an argv and a list of variable names.
+//! harness's adapter. An adapter for a harness the core knows touches this module and nothing
+//! else: the launcher and the sandbox only ever see an argv and a list of variable names.
 
 use std::ffi::OsString;
 
@@ -20,7 +20,8 @@ pub trait Adapter {
     }
 }
 
-/// Claude Code, run unattended: `claude -p --model <model> [--effort <effort>] -- <brief>`.
+/// Claude Code, run unattended: `claude -p --dangerously-skip-permissions [--model <model>]
+/// [--effort <effort>] -- <brief>`.
 ///
 /// `-p` alone starts in Manual mode, which denies the edits and commands a task needs; the
 /// sandbox is the boundary here (D2), so the harness is told to skip its own permission checks.
@@ -203,7 +204,8 @@ mod tests {
         profile.env = vec!["ANTHROPIC_API_KEY".to_owned(), "HOME".to_owned()];
         assert_eq!(env(&profile), ["ANTHROPIC_API_KEY", "HOME"]);
         // A profile with its own `command` is not running the adapter: only its own names.
+        profile.env = vec!["HOME".to_owned()];
         profile.command = Some(vec!["/bin/echo".to_owned()]);
-        assert_eq!(env(&profile), ["ANTHROPIC_API_KEY", "HOME"]);
+        assert_eq!(env(&profile), ["HOME"]);
     }
 }
