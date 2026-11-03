@@ -146,6 +146,21 @@ fn at29_every_failure_is_reported_with_a_fix() {
     assert!(shown.contains("ok    harness program"), "{shown}");
 }
 
+// AT29: when the profile has an env file beside the config, the fix for an unset variable names
+// it, so nobody has to search for it.
+#[test]
+fn at29_the_fix_for_an_unset_variable_names_the_env_file() {
+    if !sandbox_available("at29_the_fix_for_an_unset_variable_names_the_env_file") {
+        return;
+    }
+    let fixture = Fixture::new("envfile", "env = [\"DOCTOR_TOKEN\"]\n");
+    let file = fixture.dir.join("alpha.env");
+    fs::write(&file, "# DOCTOR_TOKEN=\n").unwrap();
+    let shown = text(&fixture.doctor("alpha", &[]));
+    assert!(shown.contains("set -a; . '"), "{shown}");
+    assert!(shown.contains("alpha.env"), "{shown}");
+}
+
 // AT29: a directory that does not exist is a failure too.
 #[test]
 fn at29_a_missing_directory_fails() {

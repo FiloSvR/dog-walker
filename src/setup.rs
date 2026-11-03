@@ -182,7 +182,7 @@ fn quote_list(items: &[String]) -> String {
 }
 
 /// A word for a shell that sources the env file.
-fn shell_quote(text: &str) -> String {
+pub fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
