@@ -13,7 +13,7 @@
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::thread;
@@ -104,17 +104,26 @@ pub fn check(project: &Path) -> Result<(), SlotError> {
     run_dir(project).map(|_| ())
 }
 
-/// The run directory, created private and never through a link.
+/// The run directory, created private and never through a link: neither it nor the
+/// `.dog-walker` above it may be a link, and both are 0700 like the task folder.
 fn run_dir(project: &Path) -> Result<PathBuf, SlotError> {
+    let root = project.join(".dog-walker");
     let dir = project.join(RUN_DIR);
-    fs::create_dir_all(&dir).map_err(|source| SlotError::Dir {
-        path: dir.clone(),
+    let fail = |path: &Path, source| SlotError::Dir {
+        path: path.to_owned(),
         source,
-    })?;
-    let metadata = fs::symlink_metadata(&dir).map_err(|source| SlotError::Dir {
-        path: dir.clone(),
-        source,
-    })?;
+    };
+    if fs::symlink_metadata(&root)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink() || !metadata.is_dir())
+    {
+        return Err(SlotError::UnsafeDir { path: root });
+    }
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(|source| fail(&dir, source))?;
+    let metadata = fs::symlink_metadata(&dir).map_err(|source| fail(&dir, source))?;
     // A link here would put the records, and the unlinking, outside the project.
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(SlotError::UnsafeDir { path: dir });

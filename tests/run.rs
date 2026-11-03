@@ -38,11 +38,16 @@ case $mode in
     } > "$result"
     ;;
   hold)
-    # Stay until the test writes `release` in the task folder, so a run can be observed.
-    for _ in $(seq 1 400); do
+    # Stay until the test writes `release` in the task folder, so a run can be observed; the
+    # background sleep is what kill_tree ends if a test forgets to let go.
+    sleep 300 &
+    child=$!
+    echo "$$ $child" > "$DOG_WALKER_TASK_DIR/pids"
+    for _ in $(seq 1 3000); do
       [ -e "$DOG_WALKER_TASK_DIR/release" ] && break
       sleep 0.02
     done
+    kill "$child" 2>/dev/null
     printf 'held and released\n' > "$result"
     ;;
   slow)
@@ -138,6 +143,13 @@ case $mode in
       # The marker can be cleared by a harness; the ancestry cannot.
       cleared=$(env -u DOG_WALKER_TASK_DIR "$TEST_BIN" --config "$TEST_CONFIG" run alpha "Cleared." 2>&1)
       printf 'cleared: %s\n%s\n' "$?" "$cleared"
+    } > "$result"
+    ;;
+  records)
+    {
+      run="$DOG_WALKER_TASK_DIR/../../run"
+      printf 'x' > "$run/evil.slot" 2>/dev/null && echo 'write: ok' || echo 'write: denied'
+      rm -f "$run/0001.slot" 2>/dev/null && echo 'remove: ok' || echo 'remove: denied'
     } > "$result"
     ;;
   env-report)
@@ -1658,11 +1670,10 @@ fn at12_an_overlap_is_warned_about_by_id() {
     );
 
     // A task started after the other ended overlaps nobody.
-    let third = wait_with_deadline(
-        &fixture,
-        spawn_run(&fixture, &["run", "alpha", "Three."]),
-        Duration::from_secs(20),
-    );
+    let child = spawn_run(&fixture, &["run", "alpha", "Three."]);
+    wait_for_slot(&fixture, "0003");
+    release(&fixture, "0003");
+    let third = wait_with_deadline(&fixture, child, Duration::from_secs(20));
     assert_eq!(third.status.code(), Some(0), "stderr: {}", stderr(&third));
     assert!(!stderr(&third).contains("warning:"), "{}", stderr(&third));
 }
@@ -1686,10 +1697,36 @@ fn at11_a_queued_task_can_be_cancelled() {
     assert_eq!(second.status.code(), Some(1), "stderr: {}", stderr(&second));
     let handover = fixture.handover_of("0002");
     assert!(handover.contains("status = \"cancelled\""), "{handover}");
+    // It never ran: no harness log, no result.
+    let folder = fixture.tasks().join(
+        fs::read_dir(fixture.tasks())
+            .unwrap()
+            .flatten()
+            .find(|entry| entry.file_name().to_string_lossy().starts_with("0002"))
+            .unwrap()
+            .file_name(),
+    );
+    assert!(!folder.join("harness.log").exists(), "{folder:?}");
+    assert!(!folder.join("result.md").exists(), "{folder:?}");
     assert!(!handover.contains("status = \"running\""), "{handover}");
     release(&fixture, "0001");
     let first = wait_with_deadline(&fixture, first, Duration::from_secs(20));
     assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
+}
+
+// AT11 (R9): the run records are read-only inside the sandbox: a harness cannot plant or
+// remove one to block the next run.
+#[test]
+fn at11_the_run_records_are_read_only_in_the_sandbox() {
+    if !sandbox_available("at11_the_run_records_are_read_only_in_the_sandbox") {
+        return;
+    }
+    let fixture = Fixture::new("at11-records", "records");
+    let out = fixture.run_sandboxed(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("write: denied"), "{handover}");
+    assert!(handover.contains("remove: denied"), "{handover}");
 }
 
 // AT11 (R9): a run record is not a slot when it is not a regular file: a FIFO planted in the

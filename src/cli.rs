@@ -358,6 +358,8 @@ fn take_slot(
     if slot.is_none() {
         handover.cancel_before_start("The task was cancelled while it waited for a slot.")?;
         save(handover, task)?;
+        // The end state is on disk, so the marker has done its work.
+        let _ = std::fs::remove_file(&cancel);
         log(
             stderr,
             &format!("dog-walker: task {} cancelled in the queue", task.id()),
