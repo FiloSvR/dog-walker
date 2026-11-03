@@ -126,9 +126,13 @@ pub fn check_variable(text: &str) -> Result<(), String> {
     if valid {
         Ok(())
     } else {
-        Err(format!(
-            "`{text}` is not a variable name: letters, digits and `_`"
-        ))
+        // The text is not repeated: a user who pastes the secret here by mistake must not see it
+        // printed again, into a terminal log or a screen share.
+        Err(
+            "that is not a variable name (letters, digits and `_`). Give the name of the \
+             variable, such as OPENROUTER_API_KEY; the secret itself goes in the env file"
+                .to_owned(),
+        )
     }
 }
 
