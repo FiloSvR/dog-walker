@@ -19,6 +19,9 @@ search for where; write down what you know.
 - **How to verify**: the exact command that proves it works, so it does not have to work one out.
 - **Constraints**: what it must not do or touch.
 - **Done when**: a checklist you can verify afterwards.
+- **Result format**: what the result must contain. Without it a secondary tends to write "ok".
+  Ask for what it did, the files it changed, what it could not check, and **the files it opened
+  that the brief did not mention**: that last list is what your next brief should have said.
 
 What the secondary can find with one search is not worth a paragraph; what took you many reads
 to learn is. A short task needs a short brief. If the brief is wrong, the secondary trusts it:

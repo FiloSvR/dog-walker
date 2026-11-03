@@ -29,7 +29,11 @@ brief with a result format, as `briefs/01` and `briefs/04` do:
 
     Result format: (1) what you did, in a few sentences; (2) the files you changed, one per
     line; (3) anything you could not do or check (for example, you could not run cargo); (4)
-    anything you are unsure about.
+    anything you are unsure about; (5) the files you opened that the brief did not mention, and
+    why.
+
+The fifth item is the feedback loop: each task names what the brief left out, so the next brief
+can say it.
 
 ## Claude Code reviewer (optional)
 

@@ -127,7 +127,9 @@ mod tests {
         for to in Status::ENDS {
             assert_eq!(Status::Running.end(to).unwrap(), to);
             assert!(Status::Created.end(to).is_err());
-            assert!(Status::Done.end(to).is_err());
+            for from in Status::ENDS {
+                assert!(from.end(to).is_err(), "{from}");
+            }
         }
     }
 

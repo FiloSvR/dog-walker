@@ -217,7 +217,9 @@ profile:
 2. **A cargo home with the crates already downloaded.** Inside the sandbox cargo cannot reach
    `~/.cargo`. Use a directory in the project (for example the `.cargo-home` a `cargo fetch` with
    `CARGO_HOME=$PWD/.cargo-home` fills; keep it in `.gitignore`), and add `CARGO_HOME` and
-   `CARGO_NET_OFFLINE=true` to `env` and to the env file.
+   `CARGO_NET_OFFLINE=true` to `env` and to the env file. Run that `cargo fetch` again whenever
+   `Cargo.lock` changes: a reviewer on an older cargo home fails offline with "package ... is
+   unavailable" (found when a new dependency landed, #61).
 3. **A temporary directory.** The sandbox has no `/tmp`, and tests that use the filesystem fail
    with a read-only error without one. Create one in the same place and name it:
 
