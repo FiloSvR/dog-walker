@@ -181,7 +181,10 @@ Pi (`pi -p --no-session --model … [--thinking …] --`) and Codex (`codex exec
 --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --ephemeral -m … [-c
 model_reasoning_effort="…"] --`); dsh is its own issue, and until then a profile for it names
 `command`. Each skip is the harness's documented mode for an externally sandboxed environment,
-which bwrap is (D2); a profile that needs the harness's own configuration directory lists it. A Pi profile lists Pi's install directory
+which bwrap is (D2). Each harness's own directory is the profile's to list and its variables
+to name: Pi and Codex need their install directory read-only, `HOME` (the adapter declares it)
+and a writable configuration directory (`~/.codex`, or a dedicated `CODEX_HOME` in `env` —
+`--ephemeral` keeps session files out of it, but Codex still writes its state there). A Pi profile lists Pi's install directory
 (`<agent>/install`, not the whole `<agent>`, which holds `auth.json` and past sessions) in
 `read_only_dirs`, and its provider key in `env`; the adapter declares `HOME`, since Pi finds
 the directory through it. `--no-session` stops Pi making a session there, and with a read-only

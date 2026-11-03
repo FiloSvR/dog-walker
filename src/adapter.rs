@@ -83,12 +83,15 @@ impl Adapter for Pi {
     }
 }
 
-/// Codex, run unattended: `codex exec -m <model> --dangerously-bypass-approvals-and-sandbox
-/// --skip-git-repo-check --ephemeral [-c model_reasoning_effort="<effort>"] -- <brief>`.
+/// Codex, run unattended: `codex exec --dangerously-bypass-approvals-and-sandbox
+/// --skip-git-repo-check --ephemeral [-m <model>] [-c model_reasoning_effort="<effort>"] -- <brief>`.
 ///
 /// The bypass is the documented mode for an externally sandboxed environment, which is what
-/// bwrap is here (D2); `--skip-git-repo-check` runs it in a project that is not a repository,
-/// and `--ephemeral` keeps sessions out of a home directory the sandbox does not mount.
+/// bwrap is here (D2), and `--skip-git-repo-check` runs it in a project that is not a
+/// repository. `--ephemeral` keeps session files out of the config directory, which still has
+/// to be writable (Codex writes its state there) and to be found through `HOME` or
+/// `CODEX_HOME` — the adapter declares `HOME`, and the profile lists `CODEX_HOME` or a
+/// writable directory.
 pub struct Codex;
 
 impl Adapter for Codex {
@@ -112,6 +115,12 @@ impl Adapter for Codex {
         argv.push("--".into());
         argv
     }
+
+    fn env(&self) -> &'static [&'static str] {
+        // Codex finds `$CODEX_HOME` (or `$HOME/.codex`) through the home directory; the
+        // directory itself is the profile's to list, and writable.
+        &["HOME"]
+    }
 }
 
 /// The adapter for a harness, when one is written.
@@ -123,7 +132,7 @@ pub fn of(harness: Harness) -> Option<&'static dyn Adapter> {
         Harness::Claude => Some(&CLAUDE),
         Harness::Pi => Some(&PI),
         Harness::Codex => Some(&CODEX),
-        // The others are their own issues; until then a profile names `command`.
+        // dsh is its own issue; until then a profile names `command`.
         Harness::Dsh => None,
     }
 }
@@ -309,6 +318,7 @@ mod tests {
             ],
             "{printed:?}"
         );
+        assert_eq!(env(&codex), ["HOME"]);
         let full = with_brief(&argv(&codex).unwrap(), "- fix it");
         assert_eq!(
             full.last().map(|arg| arg.to_string_lossy().into_owned()),

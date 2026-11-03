@@ -25,6 +25,11 @@ of Pi's thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `ma
 sandbox needs Pi's install directory (`<agent>/install`, not all of `<agent>`) in
 `read_only_dirs` and its provider key in `env`.
 
+A Codex profile's model is a Codex model (`gpt-5-codex`), its effort a `model_reasoning_effort`
+(`minimal`, `low`, `medium`, `high`), and its sandbox needs Codex's install directory in
+`read_only_dirs` and a writable configuration directory (`CODEX_HOME`, or `$HOME/.codex`) in
+`writable_dirs`, with its key in `env`; `--ephemeral` keeps session files out of it.
+
 `dog-walker profiles` lists the profiles, the main one first. `run` blocks until the task
 ends. It prints the path of the handover on stdout and logs on stderr. Running the main
 profile itself needs `--allow-main`.
