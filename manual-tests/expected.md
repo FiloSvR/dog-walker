@@ -70,3 +70,27 @@ Run after a worker task has left an uncommitted change (the placeholder is the w
   (22% fewer) and 7 against 4 turns. A task that only answers "ok" costs about 5000 tokens on this
   profile (the harness's own prompt and tools), so most of the saving is in the exploration,
   which is the part a brief can remove.
+- The same pair on Codex (`gpt-6.1-terra`, low effort, three runs each, all correct; Codex reports
+  only a total): `05a-thin` 18147, 9597 and 9714 tokens; `05b-rich` 10410, 16947 and 9445.
+  Medians 9714 against 10410: no saving. The rich runs used 2 commands against 3 or 4, but each
+  ran `cat src/launch.rs` on the whole file, and a task that only answers costs about 9000 tokens
+  there. The question is too small to show a brief's effect on Codex; use 06 below.
+
+## 06a-thin and 06b-rich
+
+A question whose answer is spread over three files: where a configured secret is redacted.
+
+- Both end `done` with a list that names, in `src/cli.rs`, the brief, the sandbox section and the
+  outcome (each through `sandbox::redact`), and, in `src/launch.rs`, the log and `result.md`
+  (through `redact_file` and `redact_result`, which use `sandbox::redact_bytes`). A list that
+  misses a place is a failed run; do not count its usage.
+- Repo clean. Result item (5) tells which files the brief left out: the thin runs name
+  `AGENTS.md` and `docs/agents/*` (the repo's instructions), the rich runs name none.
+- A first measurement (2026-11-03, three runs each, all correct). Pi, `glm-5.3-flash`: `06a-thin`
+  59864, 47487 and 70221 tokens in 9, 6 and 11 turns; `06b-rich` 38261, 38849 and 24785 in 6, 7
+  and 5. Medians 59864 against 38261 tokens (36% fewer) and 9 against 6 turns. Codex,
+  `gpt-6.1-terra` low: `06a-thin` 20396, 19370 and 27374; `06b-rich` 13068, 30592 and 9450.
+  Medians 20396 against 13068 (36% fewer), but one rich run cost more than every thin run, so
+  three runs show a tendency, not a result: run more before you rely on a number.
+- Reading both pairs together: a brief saves most when the answer needs exploring across files,
+  and a little or nothing when one `cat` answers it.
