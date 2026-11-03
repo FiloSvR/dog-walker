@@ -242,6 +242,13 @@ mod tests {
             ],
             "{printed:?}"
         );
+        // Pi is told where its home is, and a dash-leading brief stays a brief.
+        assert_eq!(env(&pi), ["HOME"]);
+        let full = with_brief(&argv(&pi).unwrap(), "- fix it");
+        assert_eq!(
+            full.last().map(|arg| arg.to_string_lossy().into_owned()),
+            Some("- fix it".to_owned())
+        );
     }
 
     #[test]

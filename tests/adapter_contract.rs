@@ -294,6 +294,17 @@ fn at28_the_pi_adapter_meets_the_contract() {
             .trim(),
         "closed"
     );
+    // The result the stub wrote is the one the handover records.
+    let handover = fs::read_to_string(
+        fs::read_dir(project.join(".dog-walker").join("tasks"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path().join("handover.md"))
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(handover.contains("the fake pi wrote this"), "{handover}");
     fs::remove_dir_all(&project).unwrap();
 }
 
