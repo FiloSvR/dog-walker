@@ -16,6 +16,16 @@ pub enum Status {
 }
 
 impl Status {
+    /// Every status, in the order they appear in the enum.
+    pub const ALL: [Status; 6] = [
+        Status::Created,
+        Status::Running,
+        Status::Done,
+        Status::Failed,
+        Status::TimedOut,
+        Status::Cancelled,
+    ];
+
     /// The states a task can end in.
     pub const ENDS: [Status; 4] = [
         Status::Done,
@@ -38,16 +48,9 @@ impl Status {
 
     /// Reads a status back from its name in a handover.
     pub fn parse(text: &str) -> Option<Status> {
-        [
-            Status::Created,
-            Status::Running,
-            Status::Done,
-            Status::Failed,
-            Status::TimedOut,
-            Status::Cancelled,
-        ]
-        .into_iter()
-        .find(|status| status.as_str() == text)
+        Status::ALL
+            .into_iter()
+            .find(|status| status.as_str() == text)
     }
 
     pub fn is_end(self) -> bool {
@@ -136,17 +139,7 @@ mod tests {
 
     #[test]
     fn names_are_the_handover_spellings() {
-        let names: Vec<&str> = [
-            Status::Created,
-            Status::Running,
-            Status::Done,
-            Status::Failed,
-            Status::TimedOut,
-            Status::Cancelled,
-        ]
-        .iter()
-        .map(|status| status.as_str())
-        .collect();
+        let names: Vec<&str> = Status::ALL.iter().map(|status| status.as_str()).collect();
         assert_eq!(
             names,
             [
