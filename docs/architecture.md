@@ -23,7 +23,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 Invariants, each with the test that checks it:
 
 - A config has exactly one main profile and only known keys and harnesses: `at3_*` and `at2_*` in `tests/cli.rs`.
-- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()`, or importing them `as` another name, anywhere but `src/main.rs`; the top-level `src/output.rs` and `src/main.rs` are exempt, and `src/handover.rs` may use `write_all` on the file it creates, checked by `the_exemptions_are_exact_paths`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
+- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()`, or importing them `as` another name, anywhere but `src/main.rs`; the top-level `src/output.rs` and `src/main.rs` are exempt, and `src/handover.rs`, `src/launch.rs` (the log rewrite) and `src/slots.rs` (the run records) may use `write_all` on the files they own, checked by `the_exemptions_are_exact_paths`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
 - A row of `profiles` can always be split: `model` and `effort` hold no control, line-separator or bidirectional-control characters (U+2028, U+2029, U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), and `-` means no effort: `at2_unprintable_or_reserved_values_are_rejected`, `profiles_rows_have_fixed_columns`.
 - No networking or async-runtime crate is a dependency (R19): `deny.toml` bans them (the one list), and `at24_no_networking_crates_in_lockfile` reads that list.
 - A task's status moves `created`, `running`, then exactly one end state, and an end never changes: `created_becomes_running_and_nothing_else_does`, `only_a_running_task_can_end`, `an_end_state_cannot_be_an_end_of_itself` in `src/status.rs`.
@@ -38,11 +38,13 @@ Invariants, each with the test that checks it:
   then the Result section. Bound read-only inside the sandbox (#4), so the harness cannot
   change the status or the brief; the whole-file rewrite after the run is the second net.
 - `result.md`: the one file the harness is told to write.
-- `harness.log`: the harness's stdout and stderr, raw and untruncated.
+- `harness.log`: the harness's stdout and stderr, raw and untruncated except for the
+  configured secret values (R18).
 
 After the run, dog-walker validates `result.md` and copies it into `handover.md` under the
 Result heading. A missing, empty, unreadable or non-UTF-8 `result.md` gives status `failed`
-with a reason, the raw log kept and no invented result (R13).
+with a reason, the log kept and no invented result (R13). `result.md` is the harness's own
+file, so redaction (R18) covers the handover and the log, not it.
 
 An id is allocated by creating a marker file for it under `.dog-walker/ids/` with `create_new`,
 retrying with the next id when the name is taken: the marker is atomic, so two tasks started at
@@ -72,9 +74,11 @@ It reads, from the environment:
 Adapters (#10) will build that command line from the profile; until then a profile needs a
 `command` to run, and `run` says so before it creates a task. Inside the sandbox the
 environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the
-sandbox it is inherited, and the handover says so. Redacting secret values is #8.
+sandbox it is inherited, and the handover says so. A profile can also name the variables whose
+values are secrets (`secrets`): those values are replaced with `[redacted]` in the handover and
+in `harness.log` once the run ends (R18), and the handover lists the names, never the values.
 
-Checks: `at1_*`, `at6_*`, `at7_*`, `at16_a_harness_that_cannot_start_fails_the_task`. A
+Checks: `at1_*`, `at6_*`, `at7_*`, `at9_a_task_cannot_start_tasks`, `at16_a_harness_that_cannot_start_fails_the_task`, `at23_*`. A
 harness that ends with a non-zero status is a failed task, even when it left a result
 (`at16_a_nonzero_exit_is_a_failure`), and the handover path is printed as soon as the handover
 exists, so a failure to write the end state still leaves it on stdout
@@ -100,8 +104,9 @@ git mode, the directories and the variable names (R20). A denial is an `EROFS` o
 say which rule fired, and dog-walker does not invent one.
 
 Two limits are deliberate. The `DOG_WALKER_*` and allowlisted variable values travel in
-bwrap's argument list, which is world-readable on the host; moving secret values off it is
-#8's. And a `.git` file (a `git worktree` or a submodule) points at a gitdir outside the
+bwrap's argument list, which is world-readable on the host; a secret's value is redacted from
+the handover (the brief and the result) and from `harness.log`, but not from its own command
+line while it runs, and not from the harness's `result.md`. And a `.git` file (a `git worktree` or a submodule) points at a gitdir outside the
 project, which is not mounted, so git commands fail inside; a worktree can list its gitdir as
 a read-only directory.
 
@@ -111,7 +116,8 @@ before a task starts, sandboxed or not.
 
 Checks: `at8_a_denied_operation_fails_the_task_and_is_traceable`,
 `at19_a_write_outside_the_project_is_denied`, `at20_the_network_is_there_and_can_be_cut`,
-`at21_a_host_secret_is_invisible`, `at22_without_bwrap_*`, `at25_extra_dirs_and_variables_reach_the_harness`,
+`at21_a_host_secret_is_invisible`, `at22_without_bwrap_*`, `at23_a_configured_secret_is_redacted`,
+`at23_a_non_utf8_log_is_redacted`, `at25_extra_dirs_and_variables_reach_the_harness`,
 `at26_git_*`, and the unit tests in `src/sandbox.rs`.
 
 ## Project and task settings

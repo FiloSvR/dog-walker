@@ -76,3 +76,13 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    the project or a writable directory gives write access back and is refused. Rejected:
    merging the lists, which would let a repository grant itself access to the machine.
    Discussion: issue #6.
+
+10. **Secrets are redacted because they are named, not because they look like secrets**
+    (D10, 2026-11-03). A profile lists `secrets = ["ANTHROPIC_API_KEY"]` next to the `env`
+    names; every value those names hold in the runner's environment is replaced with
+    `[redacted]` in the handover and in `harness.log` once the run ends, and the handover lists
+    the names. Guessing by name suffix was rejected: it would either miss a secret with an
+    unhelpful name (`env = ["TOKEN"]`) or shred ordinary output (`HOME`), and a list makes the
+    decision the user's. The cost is that a value the harness invents or transforms is not
+    caught: the sandbox limits what the harness can read, not what it can print, and the
+    redaction only removes the exact values it was given. Discussion: issue #8.

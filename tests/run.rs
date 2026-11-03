@@ -108,6 +108,21 @@ case $mode in
       printf 'push: %s\n' "$(status git push "$DOG_WALKER_TASK_DIR/../../../../outside.git" HEAD:refs/heads/main)"
     } > "$result"
     ;;
+  secret)
+    {
+      seen=no
+      if [ "$PROFILE_SECRET" = "topsecret-123" ]; then seen=exact; fi
+      printf 'seen: %s\n' "$seen"
+      printf 'value: %s\n' "${PROFILE_SECRET:-<unset>}"
+      printf 'plain: %s\n' "${TEST_VALUE:-<unset>}"
+    } > "$result"
+    printf 'a log line with %s\n' "${PROFILE_SECRET:-<unset>}" >&2
+    ;;
+  secret-binary)
+    printf 'value: %s\n' "${PROFILE_SECRET:-<unset>}" > "$result"
+    printf 'a log line with %s\n' "${PROFILE_SECRET:-<unset>}" >&2
+    printf 'a raw byte: \377\n' >&2
+    ;;
   env-report)
     printf 'host: %s\n' "${HOST_SECRET:-<unset>}" > "$result"
     ;;
@@ -267,6 +282,11 @@ impl Fixture {
     fn handover(&self) -> String {
         let path = self.tasks().join(self.only_task()).join("handover.md");
         fs::read_to_string(path).unwrap()
+    }
+
+    /// The harness's own result, as the harness left it.
+    fn result(&self) -> PathBuf {
+        self.tasks().join(self.only_task()).join("result.md")
     }
 
     fn log(&self) -> String {
@@ -1428,6 +1448,90 @@ fn at17_a_timeout_inside_the_sandbox_cleans_up() {
         no_process_runs(&fixture.dir.path().join("fake.sh")),
         "the sandbox tree is still running"
     );
+}
+
+// AT23 (R18): a configured secret value is absent from the handover and the log, and the
+// harness still gets it.
+#[test]
+fn at23_a_configured_secret_is_redacted() {
+    if !sandbox_available("at23_a_configured_secret_is_redacted") {
+        return;
+    }
+    let fixture = Fixture::with_policy(
+        "at23",
+        "secret",
+        "env = [\"PROFILE_SECRET\", \"TEST_VALUE\"]\nsecrets = [\"PROFILE_SECRET\"]",
+    );
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Use topsecret-123 here."])
+        .current_dir(&fixture.project)
+        .env("PROFILE_SECRET", "topsecret-123")
+        .env("TEST_VALUE", "hello")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    // The brief is redacted in the record and in the task folder's name.
+    assert!(handover.contains("Use [redacted] here."), "{handover}");
+    assert!(
+        !fixture.tasks().join("0001-use-topsecret-123-here").exists(),
+        "the slug carries the secret"
+    );
+    // The harness's own result file stays as the harness wrote it: R18 covers the handover
+    // and the log, and the result is the harness's output.
+    let result = fs::read_to_string(fixture.result()).unwrap();
+    assert!(result.contains("value: topsecret-123"), "{result}");
+    // The value the harness got is the exact one, not a placeholder.
+    assert!(handover.contains("seen: exact"), "{handover}");
+    assert!(handover.contains("plain: hello"), "{handover}");
+    assert!(handover.contains("value: [redacted]"), "{handover}");
+    assert!(!handover.contains("topsecret-123"), "{handover}");
+    assert!(
+        handover.contains("- secrets: PROFILE_SECRET (redacted)"),
+        "{handover}"
+    );
+    let log = fixture.log();
+    assert!(log.contains("[redacted]"), "{log}");
+    assert!(!log.contains("topsecret-123"), "{log}");
+}
+
+// AT23 (R18): a log that is not UTF-8 is redacted too, and the run still ends done.
+#[test]
+fn at23_a_non_utf8_log_is_redacted() {
+    if !sandbox_available("at23_a_non_utf8_log_is_redacted") {
+        return;
+    }
+    let fixture = Fixture::with_policy(
+        "at23-binary",
+        "secret-binary",
+        "env = [\"PROFILE_SECRET\"]\nsecrets = [\"PROFILE_SECRET\"]",
+    );
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("PROFILE_SECRET", "topsecret-123")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let log = fs::read(
+        fixture
+            .project
+            .join(".dog-walker")
+            .join("tasks")
+            .join("0001-do-the-thing")
+            .join("harness.log"),
+    )
+    .unwrap();
+    assert!(log.windows(10).any(|w| w == b"[redacted]"), "{log:?}");
+    assert!(
+        !log.windows(13).any(|w| w == b"topsecret-123"),
+        "the secret is in the log"
+    );
+    assert!(log.contains(&0xFF), "the raw byte is still there");
 }
 
 /// Whether no process on the host is running `path`: inside a PID namespace the harness sees
