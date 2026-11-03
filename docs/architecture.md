@@ -23,6 +23,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 | `setup` | `init`: the plan of profiles, env files and the instructions line, asked and written after a yes (R25, D19) | built (#70) |
 | `usage` | What a task cost, parsed from the harness's log by its adapter (R23, D18) | built (#58) |
 | `doctor` | The profile's checks, run in its sandbox with a probe instead of the harness (R22, D17) | built (#47) |
+| `worktree` | `run --worktree`: a git worktree for one task, made with `git` (hooks off), outside the repository (R27) | built |
 | `slots` | The run records, the per harness and model limit, and the overlap warning (R9) | built (#7) |
 
 Invariants, each with the test that checks it:

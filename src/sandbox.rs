@@ -679,6 +679,14 @@ impl Plan {
         {
             command.arg("--ro-bind").arg(&git).arg(&git);
         }
+        // In a linked worktree `.git` is a file that points into the repository's own `.git`;
+        // that directory is bound read-only too (and only when the repository agrees that this
+        // is its worktree), so that `git status` and `git diff` work in the task.
+        if git.is_file()
+            && let Some(common) = crate::config::common_git_dir(project, &git)
+        {
+            command.arg("--ro-bind").arg(&common).arg(&common);
+        }
         // The run records belong to the runner: a harness that could write one could block
         // the next run (R9).
         let records = project.join(".dog-walker").join("run");

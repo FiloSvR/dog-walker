@@ -64,6 +64,10 @@ enum Command {
         /// Run without the sandbox (bwrap): only when the user asks for it
         #[arg(long)]
         unsandboxed: bool,
+        /// Run in a new git worktree of this repository, at its HEAD, so that tasks running at
+        /// once do not write the same files; the worktree stays for you to review
+        #[arg(long)]
+        worktree: bool,
         /// Ask for a stricter network setting than the profile's
         #[arg(long, value_name = "on|off", value_parser = ["on", "off"])]
         network: Option<String>,
@@ -182,6 +186,7 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             file,
             allow_main,
             unsandboxed,
+            worktree,
             network,
             git,
         } => {
@@ -197,6 +202,7 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
                 file.as_deref(),
                 *allow_main,
                 *unsandboxed,
+                *worktree,
                 &request,
                 stdout,
                 stderr,
@@ -209,6 +215,92 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             unsandboxed,
         } => doctor(cli, profile, url, *unsandboxed, stdout),
     }
+}
+
+/// Where this project's worktrees go: beside its config, outside the repository.
+fn worktree_dir(cli: &Cli, project: &Path) -> Result<PathBuf, ConfigError> {
+    let global = match &cli.config {
+        Some(path) => path.clone(),
+        None => global_config_path()?,
+    };
+    config::project_config_path(&global, &config::project_root(project))
+        .and_then(|path| path.parent().map(|dir| dir.join("worktrees")))
+        .ok_or(ConfigError::NoConfigPath)
+}
+
+/// The sandbox plan for `profile` in `project`. The profile is the policy; the project config
+/// and the task may only tighten it (R3).
+fn plan_for(
+    profile: &config::Profile,
+    project: &Path,
+    unsandboxed: bool,
+    request: &Request,
+) -> Result<Plan, Error> {
+    // Without the sandbox there is nothing to mount, so the directories are only shown.
+    let policy = if unsandboxed {
+        Policy::as_written(profile)
+    } else {
+        Policy::checked(profile)?
+    };
+    let policy = match config::project_config(project)? {
+        Some(project_config) => {
+            let origin = format!("the project config {}", project_config.path().display());
+            project_config
+                .request()
+                .resolve(&policy, project, &origin)?
+        }
+        None => policy,
+    };
+    let policy = request.resolve(&policy, project, "the task request")?;
+    let plan = Plan::from_policy(policy, project, unsandboxed)?;
+    // A sandbox that cannot be set up is a config error, not a failed task.
+    plan.check(profile, project)?;
+    Ok(plan)
+}
+
+/// The directory the task runs in: `project`, or with `--worktree` a new worktree of it.
+fn enter(
+    cli: &Cli,
+    project: PathBuf,
+    worktree: bool,
+) -> Result<(PathBuf, Option<crate::worktree::Worktree>), Error> {
+    if !worktree {
+        return Ok((project, None));
+    }
+    let made = crate::worktree::create(&project, &worktree_dir(cli, &project)?)?;
+    Ok((made.project.clone(), Some(made)))
+}
+
+/// Creates the task folder in `project`. A worktree made for it is taken back out when that
+/// fails: there is no task to point at it.
+fn open_task(
+    project: &Path,
+    here: &Path,
+    recorded: &str,
+    worktree: Option<&crate::worktree::Worktree>,
+) -> Result<Task, Error> {
+    // The run directory is the runner's: a symlink there is a config error, not a task.
+    let created = slots::check(project)
+        .map_err(Error::from)
+        .and_then(|()| Task::create(project, recorded).map_err(Error::from));
+    if created.is_err()
+        && let Some(made) = worktree
+    {
+        crate::worktree::remove(here, made);
+    }
+    created
+}
+
+fn log_worktree(stderr: &mut dyn Write, task: &Task, made: &crate::worktree::Worktree) {
+    log(
+        stderr,
+        &format!(
+            "dog-walker: task {} works in the worktree {} (remove it with `git worktree remove --force {}` when done)",
+            task.id(),
+            made.root.display(),
+            crate::setup::shell_quote(&made.root.to_string_lossy())
+        ),
+    );
 }
 
 /// Set once the env file is loaded, so that the process started for it does not start another.
@@ -399,6 +491,7 @@ fn run_task(
     file: Option<&Path>,
     allow_main: bool,
     unsandboxed: bool,
+    worktree: bool,
     request: &Request,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
@@ -437,37 +530,29 @@ fn run_task(
     let project =
         fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
             .map_err(|source| CliError::Project { source })?;
-    // The profile is the policy; the project config and the task may only tighten it (R3).
-    // Without the sandbox there is nothing to mount, so the directories are only shown.
-    let policy = if unsandboxed {
-        Policy::as_written(profile)
-    } else {
-        Policy::checked(profile)?
-    };
-    let policy = match config::project_config(&project)? {
-        Some(project_config) => {
-            let origin = format!("the project config {}", project_config.path().display());
-            project_config
-                .request()
-                .resolve(&policy, &project, &origin)?
-        }
-        None => policy,
-    };
-    let policy = request.resolve(&policy, &project, "the task request")?;
-    let plan = Plan::from_policy(policy, &project, unsandboxed)?;
-    // A sandbox that cannot be set up is a config error, not a failed task.
-    plan.check(profile, &project)?;
-    // The run directory is the runner's: a symlink there is a config error, not a task.
-    slots::check(&project)?;
+    let plan = plan_for(profile, &project, unsandboxed, request)?;
+    // With `--worktree` the task gets a checkout of its own, made only now that the setup has
+    // been checked: a refusal above leaves nothing behind (D23).
+    let here = project.clone();
+    let (project, worktree) = enter(cli, project, worktree)?;
     // What the record keeps is redacted, down to the folder's name: the harness reads the
     // brief as written, and the task folder is dog-walker's (R18).
     let secrets = plan.policy().secret_values();
     let recorded = sandbox::redact(&brief, &secrets);
-    let task = Task::create(&project, &recorded)?;
+    let task = open_task(&project, &here, &recorded, worktree.as_ref())?;
     let handover_path = task.handover_path();
     // The policy section lists directories, which could contain a secret value; it is
     // redacted like the rest of what dog-walker keeps (R18).
     let sandbox = sandbox::redact(&plan.policy().render(plan.sandboxed()), &secrets);
+    let sandbox = match &worktree {
+        // The task runs there, not in the checkout the user is in; the changes are in it.
+        Some(made) => format!(
+            "{sandbox}\n- worktree: {} (detached at {}; the uncommitted changes of the checkout it was made from are not in it)",
+            made.root.display(),
+            made.commit
+        ),
+        None => sandbox,
+    };
     let mut handover = Handover::new(&task.id(), &profile.name, &recorded).with_sandbox(&sandbox);
     save(&handover, &task)?;
     // The handover exists, so its path goes out now: whatever happens to the task from here,
@@ -475,6 +560,9 @@ fn run_task(
     // abandon a task.
     output::path(stdout, &handover_path)?;
     log(stderr, &format!("dog-walker: task {} created", task.id()));
+    if let Some(made) = &worktree {
+        log_worktree(stderr, &task, made);
+    }
     // A slot per running task: the limit is per harness and model, and the slot's record is
     // what tells the next runner that this task is writing the project too (R9).
     let limit = config.limit(profile);

@@ -42,6 +42,7 @@ fix for each failure. Setup by hand, with the reasons for each piece, is in
 
     dog-walker run worker "Find where the retry on a busy harness is, and say how many tries."
     dog-walker run worker --file brief.md
+    dog-walker run worker --worktree "Refactor the retry."   # its own git worktree
     dog-walker profiles
     dog-walker cancel 0007
 
@@ -57,7 +58,9 @@ Each task gets a folder, `.dog-walker/tasks/<id>-<slug>/`, which ignores itself 
 - `harness.log`: its raw output, kept even when the run fails.
 
 The secondary cannot commit (`.git` is read-only unless the profile says otherwise); you review
-what it changed and you commit.
+what it changed and you commit. Tasks that write at the same time share the checkout and can
+overwrite each other: give each `--worktree`, a git worktree of its own at HEAD outside the
+repository, which stays for you to diff and merge.
 
 ## What the sandbox allows
 

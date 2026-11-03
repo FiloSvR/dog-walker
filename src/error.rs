@@ -172,6 +172,8 @@ pub enum CliError {
     Nested { variable: &'static str },
     #[error("cannot find the project directory: {source}")]
     Project { source: io::Error },
+    #[error("cannot make a worktree: {why}")]
+    Worktree { why: String },
     #[error("cannot use the env file {}: {source}", path.display())]
     EnvFile { path: PathBuf, source: io::Error },
     #[error("`{id}` is not a task id: it is the number in a task folder's name")]

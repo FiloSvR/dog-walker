@@ -114,6 +114,12 @@ the task that called it is unaffected.
 Profiles come from the config of the directory you run in: the project's own, if `init` set
 one up, else the global one. A repository's `.dog-walker/config.toml` never defines profiles.
 
+Tasks that run at the same time share the checkout and can overwrite each other's files: a
+later write wins, and nothing warns. Run them with `--worktree`, which gives each its own git
+worktree of the repository at HEAD (the printed handover is inside it, and it stays when the task
+is done, so you diff, commit and merge what it changed). It does not contain your uncommitted
+changes, so commit first if the task needs them. A task that only reads needs no worktree.
+
 A repository can tighten the policy in `.dog-walker/config.toml` (the same keys: `network`,
 `git`, `read_only_dirs`, `writable_dirs`, `env`), and a task can tighten `network` and `git`
 with `--network off` and `--git read-only`. Neither can loosen what the profile allows: a
