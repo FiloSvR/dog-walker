@@ -176,9 +176,11 @@ with its own `command` does not get the adapter's names — it is not running th
 resolves, the model and the effort reach the argv, the brief is exactly the last argument,
 stdin is closed so the harness cannot prompt, and the result reaches the handover.
 
-The adapters today are Claude Code (`claude -p --dangerously-skip-permissions --model … --`)
-and Pi (`pi -p --model … --thinking … --`); Codex and dsh are their own issues, and until then
-a profile for them names `command`.
+The adapters today are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`)
+and Pi (`pi -p --no-session --model … [--thinking …] --`); Codex and dsh are their own issues,
+and until then a profile for them names `command`. A Pi profile also lists its agent directory
+in `read_only_dirs` and `HOME` in `env` (Pi needs the home directory to find it, and
+`--no-session` keeps it from writing there); a profile's provider key is its own to list.
 
 Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
 `at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`, `at28_the_pi_adapter_meets_the_contract`,

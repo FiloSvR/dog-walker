@@ -54,12 +54,15 @@ impl Adapter for ClaudeCode {
     }
 }
 
-/// Pi, run unattended: `pi -p --model <model> [--thinking <effort>] -- <brief>`.
+/// Pi, run unattended: `pi -p --no-session --model <model> [--thinking <effort>] -- <brief>`.
+///
+/// `--no-session` is what makes it work in the sandbox: the agent directory is read-only
+/// there, and Pi would otherwise create a session inside it.
 pub struct Pi;
 
 impl Adapter for Pi {
     fn argv(&self, profile: &Profile) -> Vec<OsString> {
-        let mut argv: Vec<OsString> = vec!["pi".into(), "-p".into()];
+        let mut argv: Vec<OsString> = vec!["pi".into(), "-p".into(), "--no-session".into()];
         if !profile.model.is_empty() {
             argv.push("--model".into());
             argv.push(profile.model.clone().into());
@@ -71,6 +74,12 @@ impl Adapter for Pi {
         }
         argv.push("--".into());
         argv
+    }
+
+    fn env(&self) -> &'static [&'static str] {
+        // Pi finds its agent directory through the home directory; the directory itself (and
+        // the provider's key) is the profile's to list.
+        &["HOME"]
     }
 }
 
@@ -224,6 +233,7 @@ mod tests {
             [
                 "pi",
                 "-p",
+                "--no-session",
                 "--model",
                 "deepseek/deepseek-chat",
                 "--thinking",

@@ -755,7 +755,7 @@ fn at16_a_result_that_is_not_utf8_fails() {
     assert!(fixture.handover().contains("the result is not valid UTF-8"));
 }
 
-// R1: a harness that does not exist is a config error, caught before a task starts.
+// R1: a profile with neither a command nor an adapter cannot run.
 #[test]
 fn at16_a_harness_that_cannot_start_is_a_config_error() {
     let fixture = Fixture::new("at16-nostart", "result");

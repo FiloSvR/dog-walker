@@ -277,6 +277,12 @@ fn at28_the_pi_adapter_meets_the_contract() {
             .any(|w| w == ["--model", "deepseek/deepseek-chat"]),
         "{printed}"
     );
+    assert!(recorded.contains(&"--no-session"), "{printed}");
+    assert_eq!(
+        recorded.get(recorded.len() - 2).copied(),
+        Some("--"),
+        "{printed}"
+    );
     assert!(
         recorded.windows(2).any(|w| w == ["--thinking", "high"]),
         "{printed}"

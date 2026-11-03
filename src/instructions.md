@@ -20,6 +20,8 @@ State, in plain words, what the secondary needs and nothing else:
 
 A profile sets a `command` to say exactly what to run; without one, its harness's adapter
 builds the command line (Claude Code and Pi today; the other harnesses still need `command`).
+A Pi profile's model is Pi's `provider/id` shape (`deepseek/deepseek-chat`), and its sandbox
+needs the agent directory in `read_only_dirs` and `HOME` in `env`.
 
 `dog-walker profiles` lists the profiles, the main one first. `run` blocks until the task
 ends. It prints the path of the handover on stdout and logs on stderr. Running the main
