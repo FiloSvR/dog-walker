@@ -23,9 +23,8 @@ change to tracked files.
   file system` (`.git` is read-only by default). `git log` and `git diff --stat` work.
   `git log` on the host shows no `probe` commit.
 - Step 6: the handover's Result shows `[redacted]` where the key is, and so does
-  `harness.log`; `grep -c "$OPENROUTER_API_KEY" <task>/*` is 0 for both. `result.md` is the
-  harness's own file and is not redacted by design, so it may hold the value: it does not
-  leave the task folder, which `.gitignore` covers. The environment names are `HOME`, `PATH`,
+  `harness.log`; `grep -c "$OPENROUTER_API_KEY" <task>/*` is 0 for all three files, `result.md`
+  included (it is rewritten once the run ends). The environment names are `HOME`, `PATH`,
   the profile's `env` names, `DOG_WALKER_*` and whatever the harness itself exports (Pi adds
   `PI_*`, `AI_AGENT`); none of your other shell variables.
 - Clean up: delete `probe-scratch.txt`.

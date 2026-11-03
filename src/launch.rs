@@ -139,24 +139,36 @@ pub fn launch(
     // the harness could append what was just redacted (R18). An exited leader still has its
     // group to end.
     end(&mut child)?;
-    // The harness may have printed a secret; the log outlives the run (R18).
-    redact_log(task, &plan.policy().secret_bytes())?;
+    // The harness may have printed a secret, in its log or in its result; both outlive the run
+    // (R18).
+    let secrets = plan.policy().secret_bytes();
+    redact_file(task, &task.log_path(), &secrets)?;
+    redact_result(task, &secrets)?;
     ending
 }
 
-/// Rewrites `harness.log` with the configured secret values replaced. A log with no secret is
-/// left exactly as it is, and the rewrite goes through a temporary file in the task folder, so
-/// a reader sees either the old log or the redacted one.
+/// Redacts `result.md`, the harness's own file, once the run is over. One that is not a regular
+/// file is left for the result check to refuse with its own reason.
+fn redact_result(task: &Task, secrets: &[Vec<u8>]) -> Result<(), LaunchError> {
+    let path = task.result_path();
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => redact_file(task, &path, secrets),
+        _ => Ok(()),
+    }
+}
+
+/// Rewrites a file in the task folder (`harness.log`, `result.md`) with the configured secret
+/// values replaced. A file with no secret is left exactly as it is, and the rewrite goes through
+/// a temporary file in the task folder, so a reader sees either the old file or the redacted one.
 ///
-/// The log is the task folder's, not the harness's: the folder must still be the one created,
-/// the file must be a regular file (a link would be a way out, a FIFO a way to hang), and the
-/// content is bytes, since a harness may print anything.
-fn redact_log(task: &Task, secrets: &[Vec<u8>]) -> Result<(), LaunchError> {
+/// The folder must still be the one created, the file must be a regular file (a link would be a
+/// way out, a FIFO a way to hang), and the content is bytes, since a harness may print anything.
+fn redact_file(task: &Task, path: &Path, secrets: &[Vec<u8>]) -> Result<(), LaunchError> {
     if secrets.is_empty() {
         return Ok(());
     }
     task.verify()?;
-    let path = task.log_path();
+    let path = path.to_owned();
     let before = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -195,7 +207,10 @@ fn redact_log(task: &Task, secrets: &[Vec<u8>]) -> Result<(), LaunchError> {
     if redacted == text {
         return Ok(());
     }
-    let temp = path.with_file_name(format!("harness.log.{}.tmp", std::process::id()));
+    // No lossy conversion: a name is bytes, and this one is ours.
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(format!(".{}.tmp", std::process::id()));
+    let temp = path.with_file_name(name);
     let written = (|| {
         let mut file = fs::File::create_new(&temp)?;
         file.write_all(&redacted)?;

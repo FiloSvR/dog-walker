@@ -695,6 +695,32 @@ fn at13_ids_are_counters_and_gitignore_is_untouched() {
     assert_eq!(fs::read_to_string(&gitignore).unwrap(), "custom-ignore\n");
 }
 
+// AT13 (R10): the records keep themselves out of git: the first task writes
+// `.dog-walker/.gitignore`, the project's own `.gitignore` is untouched, and the project's policy
+// file is not ignored. A `.gitignore` that is already there is left as it is.
+#[test]
+fn at13_the_records_ignore_themselves_in_git() {
+    let fixture = Fixture::new("at13-self-ignore", "result");
+    let out = fixture.run(&["run", "alpha", "One."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let ignore = fixture.project.join(".dog-walker/.gitignore");
+    let text = fs::read_to_string(&ignore).unwrap();
+    for line in ["/.gitignore", "/tasks/", "/ids/", "/run/"] {
+        assert!(text.lines().any(|l| l == line), "{line} missing: {text}");
+    }
+    assert!(
+        !text.contains("config.toml"),
+        "the policy is committed: {text}"
+    );
+    // The project's own file is not written.
+    assert!(!fixture.project.join(".gitignore").exists());
+    // A later task leaves it as it is, even if the user edited it.
+    fs::write(&ignore, "/tasks/\n").unwrap();
+    let out = fixture.run(&["run", "alpha", "Two."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert_eq!(fs::read_to_string(&ignore).unwrap(), "/tasks/\n");
+}
+
 // AT14 (R11): the handover has front matter and the brief before the harness starts.
 #[test]
 fn at14_the_handover_is_complete_before_the_harness_starts() {
@@ -1488,8 +1514,8 @@ fn at17_a_timeout_inside_the_sandbox_cleans_up() {
     );
 }
 
-// AT23 (R18): a configured secret value is absent from the handover and the log, and the
-// harness still gets it.
+// AT23 (R18): a configured secret value is absent from the handover, the log and the result, and
+// the harness still gets it.
 #[test]
 fn at23_a_configured_secret_is_redacted() {
     if !sandbox_available("at23_a_configured_secret_is_redacted") {
@@ -1517,10 +1543,11 @@ fn at23_a_configured_secret_is_redacted() {
         !fixture.tasks().join("0001-use-topsecret-123-here").exists(),
         "the slug carries the secret"
     );
-    // The harness's own result file stays as the harness wrote it: R18 covers the handover
-    // and the log, and the result is the harness's output.
+    // The harness's own result file is redacted once the run is over, like the log: the task
+    // folder must be safe to copy or to commit by mistake (R18).
     let result = fs::read_to_string(fixture.result()).unwrap();
-    assert!(result.contains("value: topsecret-123"), "{result}");
+    assert!(result.contains("value: [redacted]"), "{result}");
+    assert!(!result.contains("topsecret-123"), "{result}");
     // The value the harness got is the exact one, not a placeholder.
     assert!(handover.contains("seen: exact"), "{handover}");
     assert!(handover.contains("plain: hello"), "{handover}");

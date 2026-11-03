@@ -132,3 +132,14 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     that copied the adapter's argv. It now requires nothing, like Pi: the profile lists its own
     credential (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`) in `env` and `secrets`. A profile
     that relied on the adapter adding the key must now list it.
+
+15. **The records keep themselves out of git, and `result.md` is redacted like the log**
+    (D15, 2026-11-03). Found by delegating a real task whose `result.md` held the API key: with
+    `.dog-walker` not ignored, `git add .` would have committed it. The first task now writes
+    `.dog-walker/.gitignore` (`/tasks/`, `/ids/`, `/run/`, itself), which leaves the project's own
+    `.gitignore` alone (AT13) and `.dog-walker/config.toml` committable, and `result.md` is
+    rewritten after the run with the secret values replaced, like `harness.log`. Rejected:
+    `*` in the folder's `.gitignore` (it would hide the project's policy file); leaving
+    `result.md` raw because it is the harness's file (the harness has already ended, and a
+    secret in a committed file is worse than an edited copy). A secret the harness transforms is
+    still not caught, as before.

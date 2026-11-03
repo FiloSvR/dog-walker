@@ -6,8 +6,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// The file-writing spellings of `WRITES`, which `handover` may use for its own document
-/// (`handover.rs`) and `launch` for rewriting the harness log once a secret is redacted from
-/// it (`launch.rs`). Everything that reaches stdout or stderr stays in the `output` module.
+/// (`handover.rs`), `launch` for rewriting the harness log and the result once a secret is
+/// redacted from them (`launch.rs`), and `task` for the `.gitignore` of the records (`task.rs`). Everything that reaches stdout or stderr stays in the `output` module.
 const FILE_WRITES: [&str; 1] = [".write_all("];
 
 /// Spellings of a write that only the `output` module may use, except for the file writes
@@ -92,10 +92,11 @@ fn only_the_output_module_writes() -> io::Result<()> {
             is_top_level(&src, &path, "main.rs"),
         );
         // The handover writes its own document, the launcher rewrites the harness log to
-        // redact a secret, and the slots write the run records: file writes, not the
-        // process's streams.
+        // redact a secret, the slots write the run records, and a task writes the records'
+        // `.gitignore`: file writes, not the process's streams.
         if is_top_level(&src, &path, "handover.rs")
             || is_top_level(&src, &path, "launch.rs")
+            || is_top_level(&src, &path, "task.rs")
             || is_top_level(&src, &path, "slots.rs")
         {
             found.retain(|pattern| !FILE_WRITES.contains(pattern));
@@ -163,6 +164,12 @@ fn the_exemptions_are_exact_paths() {
         src,
         Path::new("/repo/src/slots.rs"),
         "slots.rs"
+    ));
+    assert!(is_top_level(src, Path::new("/repo/src/task.rs"), "task.rs"));
+    assert!(!is_top_level(
+        src,
+        Path::new("/repo/src/sub/task.rs"),
+        "task.rs"
     ));
     assert!(!is_top_level(
         src,

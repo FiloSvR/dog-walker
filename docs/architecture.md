@@ -25,7 +25,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 Invariants, each with the test that checks it:
 
 - A config has exactly one main profile and only known keys and harnesses: `at3_*` and `at2_*` in `tests/cli.rs`.
-- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()`, or importing them `as` another name, anywhere but `src/main.rs`; the top-level `src/output.rs` and `src/main.rs` are exempt, and `src/handover.rs`, `src/launch.rs` (the log rewrite) and `src/slots.rs` (the run records) may use `write_all` on the files they own, checked by `the_exemptions_are_exact_paths`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
+- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()`, or importing them `as` another name, anywhere but `src/main.rs`; the top-level `src/output.rs` and `src/main.rs` are exempt, and `src/handover.rs`, `src/launch.rs` (the log and result rewrite), `src/slots.rs` (the run records) and `src/task.rs` (the records' `.gitignore`) may use `write_all` on the files they own, checked by `the_exemptions_are_exact_paths`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
 - A row of `profiles` can always be split: `model` and `effort` hold no control, line-separator or bidirectional-control characters (U+2028, U+2029, U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), and `-` means no effort: `at2_unprintable_or_reserved_values_are_rejected`, `profiles_rows_have_fixed_columns`.
 - No networking or async-runtime crate is a dependency (R19): `deny.toml` bans them (the one list), and `at24_no_networking_crates_in_lockfile` reads that list.
 - A task's status moves `created`, `running`, then exactly one end state, and an end never changes; the one exception is a task cancelled while it waits for a slot, which goes `created` to `cancelled` and never runs: `created_becomes_running_and_nothing_else_does`, `a_created_task_can_be_cancelled_before_it_starts`, `only_a_running_task_can_end`, `an_end_state_cannot_be_an_end_of_itself` in `src/status.rs`.
@@ -46,7 +46,14 @@ Invariants, each with the test that checks it:
 After the run, dog-walker validates `result.md` and copies it into `handover.md` under the
 Result heading. A missing, empty, unreadable or non-UTF-8 `result.md` gives status `failed`
 with a reason, the log kept and no invented result (R13). `result.md` is the harness's own
-file, so redaction (R18) covers the handover and the log, not it.
+file, but once the run is over it is rewritten with the configured secret values replaced, like
+`harness.log`, so the whole task folder is safe to copy (R18, D15; `at23_*`). A `result.md` that is
+not a regular file is left for the result check to refuse.
+
+The first task writes `.dog-walker/.gitignore` (`/tasks/`, `/ids/`, `/run/` and itself), so the
+records stay out of git without touching the project's own `.gitignore`; `config.toml`, the
+project's policy, is not listed because it is meant to be committed. An existing one is left as
+it is (`at13_the_records_ignore_themselves_in_git`).
 
 An id is allocated by creating a marker file for it under `.dog-walker/ids/` with `create_new`,
 retrying with the next id when the name is taken: the marker is atomic, so two tasks started at
