@@ -1,0 +1,22 @@
+# Copy to ~/.config/dog-walker/config.toml and replace @HOME@ with your home directory
+# (TOML does not expand it): sed "s|@HOME@|$HOME|g" manual-tests/config.example.toml
+#
+# `boss` is the profile of the harness you open yourself. It is never launched here; it only
+# satisfies "exactly one main profile".
+[profiles.boss]
+harness = "claude"
+model = "opus"
+main = true
+
+# `worker` is the secondary the briefs are delegated to. Change harness, model and the
+# directories to try another harness; the tests below do not depend on which one it is.
+[profiles.worker]
+harness = "pi"
+model = "openrouter/z-ai/glm-5.3-flash"
+effort = "medium"
+env = ["OPENROUTER_API_KEY", "PI_CODING_AGENT_DIR"]
+secrets = ["OPENROUTER_API_KEY"]
+# Pi's install directory only: not the whole agent directory, which holds auth.json.
+read_only_dirs = ["@HOME@/.pi/agent/install"]
+# A private, empty Pi config directory (Pi writes lock files in it).
+writable_dirs = ["@HOME@/.config/dog-walker/pi-agent"]

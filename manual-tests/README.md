@@ -1,0 +1,40 @@
+# Manual worker tests
+
+Real harness, real model, real sandbox: what `tests/` cannot cover (it only uses a fake
+harness). Each brief in `briefs/` is delegated to the `worker` profile and the outcome is
+compared with `expected.md`. The model is not deterministic, so the expectations are checks
+on the handover and the repo, not on exact wording. These tests cost API calls; run them by
+hand, never in CI.
+
+## Setup (once)
+
+1. `cargo build`, and use `target/debug/dog-walker` (or install it).
+2. `bwrap` installed, and a harness with a provider key (the example uses Pi and OpenRouter:
+   `OPENROUTER_API_KEY` exported in your shell).
+3. `mkdir -p ~/.config/dog-walker/pi-agent`
+4. `sed "s|@HOME@|$HOME|g" manual-tests/config.example.toml > ~/.config/dog-walker/config.toml`
+   (or pass `--config <file>` to every command). Check with `dog-walker profiles`.
+5. `export PI_CODING_AGENT_DIR=$HOME/.config/dog-walker/pi-agent`
+   The profile forwards the name only; the value must be set in the shell that runs `dog-walker`.
+
+## Run
+
+From the repo root (a git repository; `.dog-walker/` is ignored):
+
+    target/debug/dog-walker run worker --file manual-tests/briefs/01-readonly-review.md
+    echo "exit=$?"
+
+`stdout` is the handover path; read it, `result.md` and `harness.log` next to it, then check
+`git status`. Compare with the matching section of `expected.md`. Remove what a test left
+(`git clean -n` first) before the next one.
+
+## Tests
+
+| Brief | Checks |
+|---|---|
+| `01-readonly-review` | the happy path: a `done` task, a result in the handover, no source changed |
+| `02-sandbox-probe` | the sandbox from inside: project writes work, outside writes, `git commit` and a secret do not leak |
+| `03-no-result-path` | a brief that never names the result file ends `failed`, with the log kept |
+
+If a test fails before the model answers, the cause is usually setup: `harness.log` says
+which (a missing install directory, `Connection error.` for a missing CA store or key).
