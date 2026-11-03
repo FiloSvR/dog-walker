@@ -199,6 +199,18 @@ the directory through it. `--no-session` stops Pi making a session there, and wi
 directory it still tries to lock `settings.json` to read it, logs a warning and falls back to
 its defaults: a profile that needs those settings gives Pi a writable agent directory instead.
 
+A Claude Code profile with a subscription (no API key). The adapter always puts
+`ANTHROPIC_API_KEY` in the environment and `run` refuses when it is unset, so a profile that
+authenticates with a subscription token sets `command` instead (a profile with its own `command`
+does not get the adapter's names) and spells out the adapter's arguments. Steps, in
+`docs/setup.md`: run `claude setup-token` yourself and keep the token in a mode 600
+file outside the repo; list `CLAUDE_CODE_OAUTH_TOKEN` in `env` and `secrets`; give Claude Code a
+private, empty `CLAUDE_CONFIG_DIR` in `writable_dirs` (so it cannot read `~/.claude`), its install
+directory (`~/.local/share/claude`) in `read_only_dirs`, and a temp directory inside that
+writable directory through `CLAUDE_CODE_TMPDIR` and `TMPDIR`, since the sandbox mounts no
+`/tmp` and Claude Code fails with `EROFS … mkdir '/tmp'` without one. All of these variables are
+forwarded by name, so they must be set in the shell that runs `dog-walker`.
+
 Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
 `at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`, `at28_the_pi_adapter_meets_the_contract`,
 `at28_the_codex_adapter_meets_the_contract`, `at28_the_dsh_adapter_meets_the_contract`, and the

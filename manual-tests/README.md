@@ -17,6 +17,12 @@ hand, never in CI.
 5. `export PI_CODING_AGENT_DIR=$HOME/.config/dog-walker/pi-agent`
    The profile forwards the name only; the value must be set in the shell that runs `dog-walker`.
 
+## Claude Code reviewer (optional)
+
+The `reviewer` profile in the example config runs Claude Code with a subscription token. Set it
+up with [`docs/setup.md`](../docs/setup.md#claude-code-with-a-subscription-no-api-key), then
+`set -a; . ~/.config/dog-walker/reviewer.env; set +a` before each session.
+
 ## Run
 
 From the repo root (a git repository; `.dog-walker/` is ignored):

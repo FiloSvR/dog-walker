@@ -20,3 +20,18 @@ secrets = ["OPENROUTER_API_KEY"]
 read_only_dirs = ["@HOME@/.pi/agent/install"]
 # A private, empty Pi config directory (Pi writes lock files in it).
 writable_dirs = ["@HOME@/.config/dog-walker/pi-agent"]
+
+# `reviewer` (setup: docs/setup.md) reviews what a worker produced. Claude Code with a SUBSCRIPTION token (no API
+# key): the adapter would demand ANTHROPIC_API_KEY, so `command` repeats its arguments. With an
+# API key instead, drop `command` and the OAUTH/TMPDIR lines and list ANTHROPIC_API_KEY.
+[profiles.reviewer]
+harness = "claude"
+model = "claude-sonnet-5-5"
+effort = "high"
+command = ["claude", "-p", "--dangerously-skip-permissions", "--model", "claude-sonnet-5-5", "--effort", "high", "--"]
+env = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_TMPDIR", "TMPDIR", "HOME"]
+secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
+read_only_dirs = ["@HOME@/.local/share/claude"]
+# A private, empty directory: Claude Code cannot read ~/.claude. Its tmp/ lives inside it,
+# because the sandbox has no /tmp.
+writable_dirs = ["@HOME@/.config/dog-walker/claude-config"]

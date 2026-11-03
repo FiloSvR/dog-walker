@@ -23,6 +23,14 @@ State, in plain words, what the secondary needs and nothing else:
 
 A profile sets a `command` to say exactly what to run; without one, its harness's adapter
 builds the command line (Claude Code, Pi, Codex and dsh).
+A Claude Code profile needs `ANTHROPIC_API_KEY` in `env`, since its adapter reads the key from
+the environment. To use a subscription instead, give the profile a `command` that repeats the
+adapter's arguments (`claude -p --dangerously-skip-permissions --model <model> --effort <effort>
+--`), put `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) in `env` and `secrets`, and give
+it Claude's install directory in `read_only_dirs`, a private `CLAUDE_CONFIG_DIR` in
+`writable_dirs`, and a `CLAUDE_CODE_TMPDIR` and `TMPDIR` inside that directory: the sandbox has
+no `/tmp`, and Claude Code fails without one.
+
 A Pi profile's model is Pi's `provider/id` shape (`deepseek/deepseek-chat`), its effort is one
 of Pi's thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), and its
 sandbox needs Pi's install directory (`<agent>/install`, not all of `<agent>`) in
