@@ -471,7 +471,10 @@ mod tests {
     fn a_profile_without_a_command_or_adapter_is_an_error() {
         let root = project("no-command");
         let task = Task::create(&root, "a brief").unwrap();
-        let profile = profile(Vec::new());
+        let mut profile = profile(Vec::new());
+        // Codex has no adapter yet; Pi does, and would start the real binary.
+        profile.harness = Harness::Codex;
+        profile.command = None;
         let error = launch(
             &profile,
             &task,

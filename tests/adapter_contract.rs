@@ -227,6 +227,87 @@ fn at28_the_claude_code_adapter_meets_the_contract() {
     fs::remove_dir_all(&project).unwrap();
 }
 
+// AT28 (R4): the Pi adapter starts its harness with the profile's model and thinking level,
+// with the brief last and stdin closed, and the result reaches the handover.
+#[test]
+fn at28_the_pi_adapter_meets_the_contract() {
+    let project = dir("pi");
+    let config = project.join("config.toml");
+    fs::write(
+        &config,
+        "[profiles.alpha]\nharness = \"pi\"\nmodel = \"deepseek/deepseek-chat\"\n\
+         effort = \"high\"\n\n\
+         [profiles.main]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n",
+    )
+    .unwrap();
+    stub(&project, "pi");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
+        .arg("--config")
+        .arg(&config)
+        .args(["run", "alpha", "the brief", "--unsandboxed"])
+        .current_dir(&project)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                project.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let held = child.stdin.take();
+    let out = child.wait_with_output().unwrap();
+    drop(held);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let printed = fs::read_to_string(project.join("argv.txt")).unwrap();
+    let recorded: Vec<&str> = printed.lines().collect();
+    assert!(recorded.contains(&"-p"), "{printed}");
+    assert!(
+        recorded
+            .windows(2)
+            .any(|w| w == ["--model", "deepseek/deepseek-chat"]),
+        "{printed}"
+    );
+    assert!(recorded.contains(&"--no-session"), "{printed}");
+    assert_eq!(
+        recorded.get(recorded.len() - 2).copied(),
+        Some("--"),
+        "{printed}"
+    );
+    assert!(
+        recorded.windows(2).any(|w| w == ["--thinking", "high"]),
+        "{printed}"
+    );
+    assert_eq!(recorded.last().copied(), Some("the brief"), "{printed}");
+    assert_eq!(
+        fs::read_to_string(project.join("stdin.txt"))
+            .unwrap()
+            .trim(),
+        "closed"
+    );
+    // The result the stub wrote is the one the handover records.
+    let handover = fs::read_to_string(
+        fs::read_dir(project.join(".dog-walker").join("tasks"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path().join("handover.md"))
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(handover.contains("the fake pi wrote this"), "{handover}");
+    fs::remove_dir_all(&project).unwrap();
+}
+
 // AT5 (R4): a new adapter needs no core change — the same contract holds it, and it is not in
 // the core's list of harnesses at all.
 #[test]
@@ -253,7 +334,7 @@ fn at28_a_harness_without_an_adapter_is_refused_before_a_task() {
     let config = project.join("config.toml");
     fs::write(
         &config,
-        "[profiles.alpha]\nharness = \"pi\"\nmodel = \"local/qwen\"\n\n\
+        "[profiles.alpha]\nharness = \"codex\"\nmodel = \"gpt-5\"\n\n\
          [profiles.main]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n",
     )
     .unwrap();
@@ -267,7 +348,7 @@ fn at28_a_harness_without_an_adapter_is_refused_before_a_task() {
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("`pi`") && err.contains("not written yet"),
+        err.contains("`codex`") && err.contains("not written yet"),
         "{err}"
     );
     assert!(

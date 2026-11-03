@@ -176,8 +176,17 @@ with its own `command` does not get the adapter's names — it is not running th
 resolves, the model and the effort reach the argv, the brief is exactly the last argument,
 stdin is closed so the harness cannot prompt, and the result reaches the handover.
 
+The adapters today are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`)
+and Pi (`pi -p --no-session --model … [--thinking …] --`); Codex and dsh are their own issues,
+and until then a profile for them names `command`. A Pi profile lists Pi's install directory
+(`<agent>/install`, not the whole `<agent>`, which holds `auth.json` and past sessions) in
+`read_only_dirs`, and its provider key in `env`; the adapter declares `HOME`, since Pi finds
+the directory through it. `--no-session` stops Pi making a session there, and with a read-only
+directory it still tries to lock `settings.json` to read it, logs a warning and falls back to
+its defaults: a profile that needs those settings gives Pi a writable agent directory instead.
+
 Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
-`at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`,
+`at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`, `at28_the_pi_adapter_meets_the_contract`,
 `at28_a_harness_without_an_adapter_is_refused_before_a_task`, and the unit tests in
 `src/adapter.rs`.
 
