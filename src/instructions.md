@@ -30,6 +30,11 @@ A Codex profile's model is a Codex model (`gpt-5-codex`), its effort a `model_re
 `read_only_dirs` and a writable configuration directory (`CODEX_HOME`, or `$HOME/.codex`) in
 `writable_dirs`, with its key in `env`; `--ephemeral` keeps session files out of it.
 
+A dsh profile names the dsh profile to boot with `dsh_profile` (`headless` is the shipped
+one-task profile and the default); dsh's model and tools live in that profile, so the profile's
+`model` is only a label there. Its sandbox needs dsh's install directory in `read_only_dirs`,
+`HOME` (the adapter declares it) and a writable `DSH_HOME` in `writable_dirs`.
+
 `dog-walker profiles` lists the profiles, the main one first. `run` blocks until the task
 ends. It prints the path of the handover on stdout and logs on stderr. Running the main
 profile itself needs `--allow-main`.

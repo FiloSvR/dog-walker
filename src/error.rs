@@ -120,14 +120,6 @@ pub enum OverrideError {
 /// Why a harness could not be started: no command, and no adapter for it yet.
 #[derive(Debug, thiserror::Error)]
 pub enum AdapterError {
-    #[error(
-        "profile `{profile}` has no `command`, and the `{harness}` adapter is not written yet; \
-         set one, or follow the issue for that harness"
-    )]
-    Missing {
-        profile: String,
-        harness: crate::config::Harness,
-    },
     #[error("the adapter for `{harness}` returned no argv at all")]
     Empty { harness: crate::config::Harness },
 }

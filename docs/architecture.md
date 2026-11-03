@@ -162,8 +162,8 @@ refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit 
 
 `adapter` is the seam between a profile and how its harness is started (R4): a trait with
 `argv(&Profile)` and the names of the variables the harness needs. A profile's own `command`
-wins; otherwise `adapter::of(harness)` supplies the argv, and a harness with no adapter says so
-by name, before a task exists. Adding an adapter for a harness the core already knows touches
+wins; otherwise `adapter::of(harness)` supplies the argv — every harness the core knows has
+one — and a profile that names a harness the core does not know is refused by the config. Adding an adapter for a harness the core already knows touches
 `adapter` and the contract test, nothing else; a new harness also needs its `Harness` variant.
 
 The launcher appends the brief with `adapter::with_brief`, so "the brief is the last argument"
@@ -176,11 +176,13 @@ with its own `command` does not get the adapter's names — it is not running th
 resolves, the model and the effort reach the argv, the brief is exactly the last argument,
 stdin is closed so the harness cannot prompt, and the result reaches the handover.
 
-The adapters today are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`),
-Pi (`pi -p --no-session --model … [--thinking …] --`) and Codex (`codex exec
+The adapters are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`),
+Pi (`pi -p --no-session --model … [--thinking …] --`), Codex (`codex exec
 --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --ephemeral -m … [-c
-model_reasoning_effort="…"] --`); dsh is its own issue, and until then a profile for it names
-`command`. Each skip is the harness's documented mode for an externally sandboxed environment,
+model_reasoning_effort="…"] --`) and dsh (`dsh <dsh_profile> --`). dsh boots one of the user's
+composed profiles, and the model lives in that profile rather than in an argv flag, so its
+profile names one with `dsh_profile` (`"headless"` is the shipped one-task profile, and the
+default when the key is absent); the key is refused on any other harness. Each skip is the harness's documented mode for an externally sandboxed environment,
 which bwrap is (D2). Each harness's own directory is the profile's to list and its variables
 to name: Pi and Codex need their install directory read-only, `HOME` (the adapter declares it)
 and a writable configuration directory (`~/.codex`, or a dedicated `CODEX_HOME` in `env` —

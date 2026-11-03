@@ -406,6 +406,7 @@ mod tests {
             effort: Some("high".to_owned()),
             timeout: None,
             command: Some(command.into_iter().map(str::to_owned).collect()),
+            dsh_profile: None,
             main: false,
             network: true,
             git_writable: false,
@@ -463,28 +464,6 @@ mod tests {
         .unwrap();
         assert!(matches!(ended, End::Exited(status) if status.success()));
         assert_eq!(fs::read_to_string(task.log_path()).unwrap(), "the brief\n");
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    // Without a command and without an adapter there is nothing to start.
-    #[test]
-    fn a_profile_without_a_command_or_adapter_is_an_error() {
-        let root = project("no-command");
-        let task = Task::create(&root, "a brief").unwrap();
-        let mut profile = profile(Vec::new());
-        // dsh has no adapter yet; the others would start a real binary.
-        profile.harness = Harness::Dsh;
-        profile.command = None;
-        let error = launch(
-            &profile,
-            &task,
-            &root,
-            "the brief",
-            Duration::from_secs(5),
-            &plan(&profile),
-        )
-        .unwrap_err();
-        assert!(matches!(error, LaunchError::Adapter(_)), "{error}");
         fs::remove_dir_all(&root).unwrap();
     }
 

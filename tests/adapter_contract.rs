@@ -48,6 +48,7 @@ fn profile(harness: Harness, model: &str) -> Profile {
         effort: None,
         timeout: None,
         command: None,
+        dsh_profile: None,
         main: false,
         network: true,
         git_writable: false,
@@ -393,6 +394,74 @@ fn at28_the_codex_adapter_meets_the_contract() {
     fs::remove_dir_all(&project).unwrap();
 }
 
+// AT28 (R4): the dsh adapter boots the profile from the profile's `dsh_profile`, with the
+// brief last, and the result reaches the handover.
+#[test]
+fn at28_the_dsh_adapter_meets_the_contract() {
+    let project = dir("dsh");
+    let config = project.join("config.toml");
+    fs::write(
+        &config,
+        "[profiles.alpha]\nharness = \"dsh\"\nmodel = \"deepseek\"\ndsh_profile = \"headless\"\n\n\
+         [profiles.main]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n",
+    )
+    .unwrap();
+    stub(&project, "dsh");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
+        .arg("--config")
+        .arg(&config)
+        .args(["run", "alpha", "the brief", "--unsandboxed"])
+        .current_dir(&project)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                project.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let held = child.stdin.take();
+    let out = child.wait_with_output().unwrap();
+    drop(held);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let printed = fs::read_to_string(project.join("argv.txt")).unwrap();
+    let recorded: Vec<&str> = printed.lines().collect();
+    assert_eq!(recorded.first().copied(), Some("headless"), "{printed}");
+    assert_eq!(
+        recorded.get(recorded.len() - 2).copied(),
+        Some("--"),
+        "{printed}"
+    );
+    assert_eq!(recorded.last().copied(), Some("the brief"), "{printed}");
+    assert_eq!(
+        fs::read_to_string(project.join("stdin.txt"))
+            .unwrap()
+            .trim(),
+        "closed"
+    );
+    let handover = fs::read_to_string(
+        fs::read_dir(project.join(".dog-walker").join("tasks"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path().join("handover.md"))
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(handover.contains("the fake dsh wrote this"), "{handover}");
+    fs::remove_dir_all(&project).unwrap();
+}
+
 // AT5 (R4): a new adapter needs no core change — the same contract holds it, and it is not in
 // the core's list of harnesses at all.
 #[test]
@@ -410,35 +479,4 @@ fn at5_nothing_speaks_acp() {
     }
     let deny = fs::read_to_string(root.join("deny.toml")).unwrap();
     assert!(!deny.to_lowercase().contains("acp"), "{deny}");
-}
-
-// AT28 (R4): a harness whose adapter is not written yet is refused before a task exists.
-#[test]
-fn at28_a_harness_without_an_adapter_is_refused_before_a_task() {
-    let project = dir("no-adapter");
-    let config = project.join("config.toml");
-    fs::write(
-        &config,
-        "[profiles.alpha]\nharness = \"dsh\"\nmodel = \"deepseek\"\n\n\
-         [profiles.main]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n",
-    )
-    .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
-        .arg("--config")
-        .arg(&config)
-        .args(["run", "alpha", "the brief", "--unsandboxed"])
-        .current_dir(&project)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(2), "{out:?}");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("`dsh`") && err.contains("not written yet"),
-        "{err}"
-    );
-    assert!(
-        !project.join(".dog-walker").exists(),
-        "a task folder was made"
-    );
-    fs::remove_dir_all(&project).unwrap();
 }

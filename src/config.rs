@@ -86,6 +86,8 @@ pub struct Profile {
     pub timeout: Option<Duration>,
     /// Overrides the adapter's default command: an argv list.
     pub command: Option<Vec<String>>,
+    /// The dsh profile to boot, when the harness is dsh: dsh's own model lives in it.
+    pub dsh_profile: Option<String>,
     pub main: bool,
     /// Network on (the default) or off inside the sandbox (D3).
     pub network: bool,
@@ -127,6 +129,7 @@ struct RawProfile {
     command: Option<Vec<String>>,
     #[serde(default)]
     main: bool,
+    dsh_profile: Option<String>,
     network: Option<bool>,
     git: Option<String>,
     read_only_dirs: Option<Vec<String>>,
@@ -228,6 +231,18 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         .model
         .ok_or_else(|| fail("missing required field `model`".to_owned()))?;
     check_text("model", &model).map_err(fail)?;
+    if let Some(name) = &raw.dsh_profile {
+        check_text("dsh_profile", name).map_err(fail)?;
+        if let Err(reason) = ProfileName::parse(name) {
+            return Err(fail(format!("`dsh_profile` {reason}")));
+        }
+        if harness != Harness::Dsh {
+            return Err(fail(
+                "`dsh_profile` is only for `harness = \"dsh\"`: it names the dsh profile to boot"
+                    .to_owned(),
+            ));
+        }
+    }
     if let Some(effort) = &raw.effort {
         check_text("effort", effort).map_err(fail)?;
         if effort.trim() == "-" {
@@ -273,6 +288,7 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
         effort: raw.effort,
         timeout,
         command: raw.command,
+        dsh_profile: raw.dsh_profile,
         main: raw.main,
         network: sandbox.network,
         git_writable: sandbox.git_writable,
