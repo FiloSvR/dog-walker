@@ -107,3 +107,20 @@ A question whose answer is spread over three files: where a configured secret is
   lines (`src/cli.rs` 288 to 368) and say to read only those.
 - Reading both pairs together: a brief saves most when the answer needs exploring across files,
   and a little or nothing when one `cat` answers it.
+
+## 06c-ranges
+
+`06b-rich` with line ranges and an instruction to read only those. The ranges are those of the
+commit this brief was written on (`src/cli.rs` 300 to 370, `src/launch.rs` 140 to 210,
+`src/sandbox.rs` 100 to 120 and 425 to 465); update them when the code moves, or the brief
+misleads.
+
+- Same checks as 06: `done`, the same places named, repo clean.
+- Ten runs on Pi, `glm-5.3-flash` (2026-11-03; every answer correct): median 13757 tokens in 3
+  turns; nine of the ten cost 12588 to 14808 and one cost 105166. Against `06b-rich` (median
+  35881, 6 turns) that is 62% fewer tokens, and against `06a-thin` (65043, 9.5 turns) 79% fewer.
+  The spread is the other gain: the nine are within 20% of each other, where the rich runs
+  ranged from 22891 to 144373.
+- The 105166 run did read only the given ranges. Its cost was writing its own result file seven
+  times (write, edit, read, write again), a failure that has nothing to do with the brief. A
+  brief removes searching and reading, not that.

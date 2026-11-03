@@ -11,8 +11,10 @@ so it does not have to be paid for twice. A brief that only says what to do make
 search for where; write down what you know.
 
 - **Goal**: what to achieve and why.
-- **Where to look**: the files and lines that matter (`src/sandbox.rs`, `Policy::checked`), and
-  what you found there, as a fact it can check, not as a hint.
+- **Where to look**: the files and **line ranges** that matter (`src/sandbox.rs` lines 55 to
+  185, `Policy::checked`), and what you found there, as a fact it can check, not as a hint. A
+  file name alone is not enough: the secondary reads the whole file, and a big read is paid
+  again on every later turn. Say to read only the range (`sed -n 'A,Bp' FILE`).
 - **Already settled**: what you ruled out and what you decided, with the reason, so it does not
   reopen them. Findings, not the story of how you got there.
 - **Skip**: what it should not read or touch, such as the files you checked that do not apply.
