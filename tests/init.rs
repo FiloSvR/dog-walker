@@ -380,6 +380,109 @@ fn at31_a_project_gets_its_own_config() {
     assert_eq!(elsewhere.status.code(), Some(2), "{}", stderr(&elsewhere));
 }
 
+/// A repository `main` with a linked worktree `wt`, laid out as git does, in a fresh folder.
+fn repo_with_worktree(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let base = std::env::temp_dir().join(format!("dog-walker-root-{}-{name}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let main = base.join("main");
+    let wt = base.join("wt");
+    let admin = main.join(".git/worktrees/wt");
+    fs::create_dir_all(&admin).unwrap();
+    fs::create_dir_all(wt.join("deep/er")).unwrap();
+    fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+    fs::write(admin.join("commondir"), "../..\n").unwrap();
+    fs::write(
+        admin.join("gitdir"),
+        format!("{}\n", wt.join(".git").display()),
+    )
+    .unwrap();
+    (
+        base.canonicalize().unwrap(),
+        main.canonicalize().unwrap(),
+        wt.canonicalize().unwrap(),
+    )
+}
+
+// D20: a worktree and a subdirectory belong to the main checkout's project.
+#[test]
+fn a_worktree_and_a_subdirectory_belong_to_the_main_checkouts_project() {
+    use dog_walker::config::project_root;
+    let (base, main, wt) = repo_with_worktree("ok");
+    assert_eq!(project_root(&main), main);
+    assert_eq!(project_root(&wt), main);
+    assert_eq!(project_root(&wt.join("deep/er")), main);
+    fs::remove_dir_all(base).unwrap();
+}
+
+// D20: a repository cannot name another checkout as its main one: the main checkout must list the
+// worktree and point back at it.
+#[test]
+fn a_worktree_the_main_checkout_does_not_list_is_its_own_project() {
+    use dog_walker::config::project_root;
+    let (base, _, wt) = repo_with_worktree("forged");
+    fs::write(
+        base.join("main/.git/worktrees/wt/gitdir"),
+        "/elsewhere/.git\n",
+    )
+    .unwrap();
+    assert_eq!(project_root(&wt), wt);
+    fs::remove_dir_all(base).unwrap();
+}
+
+// D20: a directory in no repository is its own project.
+#[test]
+fn a_directory_in_no_repository_is_its_own_project() {
+    let dir = std::env::temp_dir().join(format!("dog-walker-root-{}-none", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    assert_eq!(dog_walker::config::project_root(&dir), dir);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+// AT31 (R25, D20): a linked git worktree and a subdirectory use the project config of the main
+// checkout, so the one setup governs every checkout of the repository.
+#[test]
+fn at31_a_worktree_uses_the_main_checkouts_project_config() {
+    let home = Home::new("worktree");
+    home.all_harnesses();
+    let app = home.path().join("app");
+    let admin = app.join(".git/worktrees/wt");
+    let wt = home.path().join("wt");
+    fs::create_dir_all(&admin).unwrap();
+    fs::create_dir_all(wt.join("src")).unwrap();
+    fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+    fs::write(admin.join("commondir"), "../..\n").unwrap();
+    fs::write(
+        admin.join("gitdir"),
+        format!("{}\n", wt.join(".git").display()),
+    )
+    .unwrap();
+    let init = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
+        .args([
+            "init", "--scope", "project", "--main", "claude", "--worker", "codex",
+        ])
+        .args(["--reviewer", "no", "--yes"])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", home.path().join("bin"))
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    for dir in [app.join("src"), wt.clone(), wt.join("src")] {
+        fs::create_dir_all(&dir).unwrap();
+        let out = home.dw(&["profiles"], &dir);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}: {}",
+            dir.display(),
+            stderr(&out)
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("worker"));
+    }
+}
+
 // AT31 (R25, D20): a main harness with no instructions file is still set up for the project, and
 // gets the line printed.
 #[test]

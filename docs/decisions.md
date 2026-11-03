@@ -210,7 +210,11 @@ real trade-off. Discussion is on the issue named at the end of each entry.
 20. **A project can have a config of its own, kept outside the repository.** `init` asks first
     whether it sets up the project or the user globally (`--scope`; `--yes` takes the project).
     A project's profiles go to `<config dir>/projects/<name>-<hash>/config.toml`, keyed by the
-    project's canonical path (`<hash>` is FNV-1a, stable across Rust versions), with each
+    project's root (`<hash>` is FNV-1a of its canonical path, stable across Rust versions; the
+    root is the repository's, and for a linked git worktree the main checkout's, so every
+    worktree and subdirectory of a repository uses the one config; a worktree's `.git` file is
+    believed only when the main checkout lists the worktree and the entry points back at that
+    file, so a repository cannot borrow another project's profiles), with each
     profile's private directory and env file beside it. Every command run in that directory
     reads that config and no other; any directory without one reads the global config. A
     `--config` option overrides both. Rejected: profiles in the repository's
