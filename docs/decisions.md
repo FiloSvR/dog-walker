@@ -76,3 +76,12 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    the project or a writable directory gives write access back and is refused. Rejected:
    merging the lists, which would let a repository grant itself access to the machine.
    Discussion: issue #6.
+
+11. **A concurrency limit is advisory, and a slot is a record of the runner's own process**
+    (D11, 2026-11-03). `.dog-walker/run/<id>.slot` holds the runner's pid; another runner
+    counts the records whose pid is alive and waits while the count for its harness and model
+    is at the limit. Two runners can read the same free slot and both start, so a limit of one
+    can briefly be two. Rejected: a lock or semaphore that would make the limit exact, because
+    it serialises starts and needs a slot count the per-harness limits do not have, and because
+    the requirement is a limit that warns, not a scheduler. A stale record (the runner died) is
+    cleaned by the next runner that sees it. Discussion: issue #7.

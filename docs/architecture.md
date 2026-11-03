@@ -19,6 +19,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 | `status` | The `Status` type and its transitions (R12) | built (#16) |
 | `launch` | Starting the harness, waiting, and ending its process group (R5, R14) | built (#16, #5) |
 | `sandbox` | The bwrap command, the profile's policy, and what the handover records (R15-R17, R20) | built (#4) |
+| `slots` | The run records, the per harness and model limit, and the overlap warning (R9) | built (#7) |
 
 Invariants, each with the test that checks it:
 
@@ -139,6 +140,23 @@ run), `at4_a_project_config_that_loosens_is_named`, `at4_a_project_config_cannot
 refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit tests
 `a_request_may_tighten_and_is_named_when_it_loosens` and
 `a_read_only_directory_inside_the_project_can_be_added_but_not_dropped` in `src/sandbox.rs`.
+
+## Concurrency
+
+Every `run` writes a record to `.dog-walker/run/<id>.slot` (pid, id, harness, model) before it
+starts its harness, and removes it when it ends; a record whose pid is gone is stale, and the
+next runner that sees one removes it. The user's config can set `[limits]` per `harness/model`
+(`"pi/local/qwen" = 1`); a runner over its limit waits for a record to go, says so on stderr,
+and starts as soon as one does. With no limit, as many tasks run as the user starts. The count
+is advisory: two runners can see the same free slot, which is enough for a limit that warns
+rather than refuses.
+
+Every task writes the project, so any two live tasks have overlapping write scopes. A run that
+starts while another is live logs `warning: task <id> overlaps task <other>'s write scope (the
+project)`, naming both ids.
+
+Checks: `at10_three_tasks_run_at_once`, `at11_a_limit_queues_the_second_task`,
+`at12_an_overlap_is_warned_about_by_id`, and the unit tests in `src/slots.rs`.
 
 ## Stopping a task
 
