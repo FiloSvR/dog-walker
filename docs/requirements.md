@@ -83,6 +83,6 @@ Delegation back from a secondary. A background or pollable mode. ACP. Cost budge
 - [ ] AT23 (R18) A configured secret value is absent from the handover and logs.
 - [ ] AT24 (R19) A normal run opens no listening socket, starts no daemon and makes no network request of its own.
 - [ ] AT26 (R16a) By default `git commit`, `git add` and `git push` fail inside the sandbox while `git log` and `git diff` work; with `.git` listed writable in the profile, `git commit` works.
-- [ ] AT28 (R4) An adapter runs its harness with the profile's model and effort, non-interactively, and its result reaches the handover (Claude Code and Pi today).
+- [ ] AT28 (R4) An adapter runs its harness with the profile's model and effort, non-interactively, and its result reaches the handover (Claude Code, Pi and Codex today).
 - [ ] AT27 (R21) `dog-walker instructions` prints text that names `run`, the exit code and the handover location.
 - [ ] AT25 (R20) Extra directories and passed variables from a profile are available to the harness; the handover lists them, the network setting and the variable names.
