@@ -76,6 +76,47 @@ The reason is in `harness.log` next to the handover. `` `X` is in the policy's e
 is not set `` means a variable is not exported in this shell; `EROFS … '/tmp'` means the temp
 variables are missing; `Connection error.` means no network or no CA store in the sandbox.
 
+## Pi
+
+Pi keeps its install under `~/.pi/agent/install` and writes its sessions and auth beside it. Mount
+only the install directory read-only, and give Pi a private agent directory to write to, so it
+cannot reach your own sessions or logins. The provider key (here OpenRouter) is passed as an
+environment variable.
+
+1. Create the agent directory and name it in a private file, with the key:
+
+       mkdir -p ~/.config/dog-walker/pi-agent && chmod 700 ~/.config/dog-walker/pi-agent
+       install -m 600 /dev/null ~/.config/dog-walker/pi.env
+       cat >> ~/.config/dog-walker/pi.env <<EOF
+       OPENROUTER_API_KEY=<your key>
+       PI_CODING_AGENT_DIR=$HOME/.config/dog-walker/pi-agent
+       EOF
+       set -a; . ~/.config/dog-walker/pi.env; set +a
+
+2. Add the profile (replace `/home/you`). The model is Pi's `provider/id` shape, and the effort one
+   of Pi's thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`):
+
+       [profiles.worker]
+       harness = "pi"
+       model = "openrouter/z-ai/glm-5.3-flash"
+       effort = "medium"
+       env = ["OPENROUTER_API_KEY", "PI_CODING_AGENT_DIR"]
+       secrets = ["OPENROUTER_API_KEY"]
+       read_only_dirs = ["/home/you/.pi/agent/install"]
+       writable_dirs = ["/home/you/.config/dog-walker/pi-agent"]
+
+   `read_only_dirs` is `<agent>/install`, not all of `<agent>`: the rest holds your sessions and
+   credentials. For another provider, list its key (`DEEPSEEK_API_KEY`, …) instead and use its
+   name in the model.
+3. Check: `dog-walker run worker "Reply with the word ok."` ends `done`.
+
+### If it fails
+
+`EROFS` on `auth.json` means `PI_CODING_AGENT_DIR` is missing or not in `writable_dirs`; a missing
+install directory means `read_only_dirs` is wrong; `Connection error.` on Fedora-like systems
+needs a dog-walker that mounts `/etc/pki/tls/certs`. The reason is in `harness.log` next to the
+handover.
+
 ## Codex
 
 Codex keeps its login in its home (`~/.codex/auth.json`, a ChatGPT login, or `OPENAI_API_KEY`),

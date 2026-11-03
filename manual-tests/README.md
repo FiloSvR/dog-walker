@@ -9,7 +9,7 @@ hand, never in CI.
 ## Setup (once)
 
 1. `cargo build`, and use `target/debug/dog-walker` (or install it).
-2. `bwrap` installed, and a harness with a provider key (the example uses Pi and OpenRouter:
+2. `bwrap` installed, and a harness with a provider key (the example uses Pi and OpenRouter, set up as in [`docs/setup.md`](../docs/setup.md#pi):
    `OPENROUTER_API_KEY` exported in your shell).
 3. `mkdir -p ~/.config/dog-walker/pi-agent`
 4. `sed "s|@HOME@|$HOME|g" manual-tests/config.example.toml > ~/.config/dog-walker/config.toml`
