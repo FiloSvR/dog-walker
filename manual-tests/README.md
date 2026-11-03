@@ -39,7 +39,7 @@ can say it.
 
 The `reviewer` profile in the example config runs Claude Code with a subscription token. Set it
 up with [`docs/setup.md`](../docs/setup.md#claude-code-with-a-subscription-no-api-key), then
-`set -a; . ~/.config/dog-walker/reviewer.env; set +a` before each session.
+`reviewer.env` is loaded by dog-walker itself.
 
 ## Codex and dsh (optional)
 

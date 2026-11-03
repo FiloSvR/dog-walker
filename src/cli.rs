@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, ExitStatus};
 use std::time::Duration;
@@ -210,6 +211,45 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
     }
 }
 
+/// Set once the env file is loaded, so that the process started for it does not start another.
+const ENV_LOADED: &str = "DOG_WALKER_ENV_LOADED";
+
+/// The profile's env file, `<profile>.env` beside the config, when there is one.
+fn env_file_of(cli: &Cli, profile: &str) -> Result<Option<PathBuf>, ConfigError> {
+    Ok(config_path(cli)?
+        .parent()
+        .map(|dir| dir.join(format!("{profile}.env")))
+        .filter(|file| file.is_file()))
+}
+
+/// Loads the profile's env file (D21): the variables it sets replace the shell's, and the rest of
+/// the shell's stay. A process cannot change its own environment without `unsafe`, so this starts
+/// dog-walker again, in place, with the variables set; it returns only when there is nothing to
+/// load.
+fn adopt_env_file(cli: &Cli, profile: &str) -> Result<(), Error> {
+    if std::env::var_os(ENV_LOADED).is_some() {
+        return Ok(());
+    }
+    let Some(file) = env_file_of(cli, profile)? else {
+        return Ok(());
+    };
+    let env_error = |source| CliError::EnvFile {
+        path: file.clone(),
+        source,
+    };
+    let variables = crate::envfile::parse(&fs::read_to_string(&file).map_err(env_error)?);
+    if variables.is_empty() {
+        return Ok(());
+    }
+    let program = std::env::current_exe().map_err(env_error)?;
+    let error = std::process::Command::new(program)
+        .args(std::env::args_os().skip(1))
+        .envs(variables)
+        .env(ENV_LOADED, "1")
+        .exec();
+    Err(env_error(error).into())
+}
+
 /// Prints one line per check; exit 1 when any failed.
 fn doctor(
     cli: &Cli,
@@ -229,11 +269,8 @@ fn doctor(
     let project =
         fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
             .map_err(|source| CliError::Project { source })?;
-    // The env file `init` made sits beside the config; the fix for an unset variable names it.
-    let env_file = config_path(cli)?
-        .parent()
-        .map(|dir| dir.join(format!("{}.env", profile.name)))
-        .filter(|file| file.is_file());
+    adopt_env_file(cli, profile.name.as_str())?;
+    let env_file = env_file_of(cli, profile.name.as_str())?;
     let checks = crate::doctor::diagnose(profile, &project, url, unsandboxed, env_file.as_deref());
     for check in &checks {
         output::line(stdout, &check.line())?;
@@ -320,6 +357,7 @@ fn init(
         worker: worker.map(str::to_owned),
         reviewer: reviewer.map(str::to_owned),
         scope: scope.map(str::to_owned),
+        hide: std::io::IsTerminal::is_terminal(&io::stdin()),
         yes,
     };
     setup::run_init(
@@ -391,6 +429,7 @@ fn run_task(
     }
     // A profile without a `command` runs its harness's adapter (R4).
     adapter::argv(profile)?;
+    adopt_env_file(cli, profile.name.as_str())?;
     let brief = brief(task, file)?;
     // From here on a Ctrl-C is a cancel that closes the handover, not a dead runner; before a
     // task exists, the default disposition is the right one.

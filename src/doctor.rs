@@ -104,16 +104,16 @@ pub fn diagnose(
             Outcome::Ok
         } else {
             let fix = env_file.map_or_else(
-                || "export them (source the profile's env file)".to_owned(),
+                || "export them in this shell".to_owned(),
                 |file| {
                     format!(
-                        "run `set -a; . {}; set +a` in this shell",
+                        "put the value in {}, which dog-walker loads itself",
                         crate::setup::shell_quote(&file.display().to_string())
                     )
                 },
             );
             Outcome::Fail(format!(
-                "not set in this shell: {}; {fix} before running",
+                "not set in this shell: {}; {fix}",
                 unset.join(", ")
             ))
         },

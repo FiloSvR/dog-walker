@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "=4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
-rustix = { version = "=1.1.6", default-features = false, features = ["fs", "process", "std"] }
+rustix = { version = "=1.1.6", default-features = false, features = ["fs", "process", "std", "termios"] }
 serde = { version = "=1.0.229", default-features = false, features = ["std", "derive"] }
 serde_json = { version = "=1.0.154", default-features = false, features = ["std"] }
 signal-hook = { version = "=0.4.6", default-features = false }

@@ -30,9 +30,16 @@ command uses it, and only it; other directories keep the global config. **Global
 `--yes` takes the project. It shows everything it will write and asks before it writes. Pi and
 dsh have no verified instructions file, so for those it prints the line for you to add.
 
-It never asks for, reads or writes a secret. What it leaves to you is printed at the end: put
-your key in the env file (or run `claude setup-token`, or copy the Codex login), load the env
-file, and run `dog-walker doctor <profile>`. The same answers can be given as options, for a
+For each secondary it asks for the credential's value (the OpenRouter or DeepSeek key, or the
+token from `claude setup-token`), typed hidden, and saves it in that profile's env file (mode
+600) as `NAME='value'`; an empty answer leaves it for you to add. For Codex it offers to copy
+`~/.codex/auth.json` into the profile's private directory (mode 600). It never reads a key from
+your environment, takes none as an option (a command line is kept in shell history), and
+prints none; an env file that exists is not changed, so the key is then yours to add. `--yes`
+asks nothing, so it saves no key. What is left is printed at the end; run
+`dog-walker doctor <profile>`. You do not source the env file: `run` and `doctor` load the
+profile's `<profile>.env` beside the config themselves (the values in it replace the shell's;
+the file is read as data, never run). The same answers can be given as options, for a
 script: `dog-walker init --main claude --worker pi:openrouter/z-ai/glm-5.3-flash --reviewer no
 --yes`. Run again later, it adds only the roles you do not have yet and leaves the rest alone.
 
@@ -92,9 +99,8 @@ The Claude Code adapter requires no credential: the profile lists the one it use
    --`, the brief last). `secrets` makes dog-walker replace the token with `[redacted]` in the
    handover and the log.
 
-4. **Load the variables, then run**, in the same shell:
+4. **Run.** dog-walker loads `reviewer.env` itself (sourcing it in your shell also works):
 
-       set -a; . ~/.config/dog-walker/reviewer.env; set +a
        dog-walker run reviewer "Reply with the word ok."
 
    The task should end `done` with `ok` in the handover. A tool that starts a fresh shell for

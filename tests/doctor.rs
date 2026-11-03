@@ -146,6 +146,37 @@ fn at29_every_failure_is_reported_with_a_fix() {
     assert!(shown.contains("ok    harness program"), "{shown}");
 }
 
+// AT29 (D21): the profile's env file is loaded by dog-walker itself: its values replace the
+// shell's, nothing in it is run, and no value is shown.
+#[test]
+fn at29_the_env_file_is_loaded_without_sourcing_it() {
+    if !sandbox_available("at29_the_env_file_is_loaded_without_sourcing_it") {
+        return;
+    }
+    let fixture = Fixture::new(
+        "loaded",
+        &format!(
+            "env = [\"DOCTOR_TOKEN\", \"TMPDIR\"]\nsecrets = [\"DOCTOR_TOKEN\"]\nwritable_dirs = [\"{}\"]\n",
+            fixture_dir("loaded").join("writable").display()
+        ),
+    );
+    let marker = fixture.dir.join("ran");
+    fs::write(
+        fixture.dir.join("alpha.env"),
+        format!(
+            "DOCTOR_TOKEN='s3cret-value'\nTMPDIR={}\nBAD=$(touch {})\n",
+            fixture.writable().display(),
+            marker.display()
+        ),
+    )
+    .unwrap();
+    let shown = text(&fixture.doctor("alpha", &[]));
+    assert!(!shown.contains("FAIL"), "{shown}");
+    assert!(shown.contains("ok    environment"), "{shown}");
+    assert!(!shown.contains("s3cret-value"), "{shown}");
+    assert!(!marker.exists());
+}
+
 // AT29: when the profile has an env file beside the config, the fix for an unset variable names
 // it, so nobody has to search for it.
 #[test]
@@ -157,7 +188,7 @@ fn at29_the_fix_for_an_unset_variable_names_the_env_file() {
     let file = fixture.dir.join("alpha.env");
     fs::write(&file, "# DOCTOR_TOKEN=\n").unwrap();
     let shown = text(&fixture.doctor("alpha", &[]));
-    assert!(shown.contains("set -a; . '"), "{shown}");
+    assert!(shown.contains("put the value in '"), "{shown}");
     assert!(shown.contains("alpha.env"), "{shown}");
 }
 

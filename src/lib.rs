@@ -8,6 +8,7 @@ pub mod adapter;
 pub mod cli;
 pub mod config;
 pub mod doctor;
+pub mod envfile;
 pub mod error;
 pub mod handover;
 pub mod launch;
