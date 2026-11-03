@@ -23,6 +23,12 @@ The `reviewer` profile in the example config runs Claude Code with a subscriptio
 up with [`docs/setup.md`](../docs/setup.md#claude-code-with-a-subscription-no-api-key), then
 `set -a; . ~/.config/dog-walker/reviewer.env; set +a` before each session.
 
+## Codex and dsh (optional)
+
+The `codex` and `dsh` profiles in the example config run the same briefs on those harnesses.
+Set them up with [`docs/setup.md`](../docs/setup.md#codex), then source `codex.env` or `dsh.env`
+before the run (for example `01-readonly-review` on each).
+
 ## Run
 
 From the repo root (a git repository; `.dog-walker/` is ignored):

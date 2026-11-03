@@ -33,3 +33,21 @@ read_only_dirs = ["@HOME@/.local/share/claude"]
 # A private, empty directory: Claude Code cannot read ~/.claude. Its tmp/ lives inside it,
 # because the sandbox has no /tmp.
 writable_dirs = ["@HOME@/.config/dog-walker/claude-config"]
+
+# `codex` and `dsh`: set up as in docs/setup.md (private homes, env files, install directories).
+[profiles.codex]
+harness = "codex"
+model = "gpt-6.1-terra"
+effort = "low"
+env = ["CODEX_HOME"]
+read_only_dirs = ["@HOME@/.npm-global/lib/node_modules/@openai/codex"]
+writable_dirs = ["@HOME@/.config/dog-walker/codex-home"]
+
+[profiles.dsh]
+harness = "dsh"
+dsh_profile = "headless"
+model = "deepseek"
+env = ["DEEPSEEK_API_KEY", "DSH_HOME", "TMPDIR", "DSH_PERMISSION_MODE"]
+secrets = ["DEEPSEEK_API_KEY"]
+read_only_dirs = ["@HOME@/.npm-global/lib/node_modules/@deepseek-ai/dsh"]
+writable_dirs = ["@HOME@/.config/dog-walker/dsh-home"]
