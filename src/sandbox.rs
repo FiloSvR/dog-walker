@@ -90,10 +90,18 @@ impl Policy {
 
     /// The values to redact: what the configured secret names hold in this environment.
     pub fn secret_values(&self) -> Vec<String> {
+        self.secret_bytes()
+            .into_iter()
+            .map(|value| String::from_utf8_lossy(&value).into_owned())
+            .collect()
+    }
+
+    /// The same values as bytes, so a value that is not UTF-8 is still found in a log.
+    pub fn secret_bytes(&self) -> Vec<Vec<u8>> {
         self.secrets
             .iter()
             .filter_map(env::var_os)
-            .map(|value| value.to_string_lossy().into_owned())
+            .map(|value| value.as_encoded_bytes().to_vec())
             .filter(|value| !value.is_empty())
             .collect()
     }
@@ -370,6 +378,27 @@ fn shown(dir: &Path, field: &'static str, origin: &str) -> Result<PathBuf, Overr
         field,
         detail,
     })
+}
+
+/// `bytes` with every configured secret value replaced, byte for byte: a log is not required
+/// to be UTF-8, and a secret that is not is still a secret.
+pub fn redact_bytes(bytes: &[u8], secrets: &[Vec<u8>]) -> Vec<u8> {
+    let mut redacted = bytes.to_vec();
+    for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
+        let mut search = 0;
+        while let Some(rest) = redacted.get(search..) {
+            let Some(at) = rest
+                .windows(secret.len())
+                .position(|window| window == secret.as_slice())
+            else {
+                break;
+            };
+            let at = search + at;
+            redacted.splice(at..at + secret.len(), b"[redacted]".iter().copied());
+            search = at + "[redacted]".len();
+        }
+    }
+    redacted
 }
 
 /// `text` with every configured secret value replaced: the harness may print one, and the

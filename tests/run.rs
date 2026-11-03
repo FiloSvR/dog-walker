@@ -116,6 +116,11 @@ case $mode in
     } > "$result"
     printf 'a log line with %s\n' "${PROFILE_SECRET:-<unset>}" >&2
     ;;
+  secret-binary)
+    printf 'value: %s\n' "${PROFILE_SECRET:-<unset>}" > "$result"
+    printf 'a log line with %s\n' "${PROFILE_SECRET:-<unset>}" >&2
+    printf 'a raw byte: \377\n' >&2
+    ;;
   env-report)
     printf 'host: %s\n' "${HOST_SECRET:-<unset>}" > "$result"
     ;;
@@ -1472,6 +1477,43 @@ fn at23_a_configured_secret_is_redacted() {
     let log = fixture.log();
     assert!(log.contains("[redacted]"), "{log}");
     assert!(!log.contains("topsecret-123"), "{log}");
+}
+
+// AT23 (R18): a log that is not UTF-8 is redacted too, and the run still ends done.
+#[test]
+fn at23_a_non_utf8_log_is_redacted() {
+    if !sandbox_available("at23_a_non_utf8_log_is_redacted") {
+        return;
+    }
+    let fixture = Fixture::with_policy(
+        "at23-binary",
+        "secret-binary",
+        "env = [\"PROFILE_SECRET\"]\nsecrets = [\"PROFILE_SECRET\"]",
+    );
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("PROFILE_SECRET", "topsecret-123")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let log = fs::read(
+        fixture
+            .project
+            .join(".dog-walker")
+            .join("tasks")
+            .join("0001-do-the-thing")
+            .join("harness.log"),
+    )
+    .unwrap();
+    assert!(log.windows(10).any(|w| w == b"[redacted]"), "{log:?}");
+    assert!(
+        !log.windows(13).any(|w| w == b"topsecret-123"),
+        "the secret is in the log"
+    );
+    assert!(log.contains(&0xFF), "the raw byte is still there");
 }
 
 /// Whether no process on the host is running `path`: inside a PID namespace the harness sees

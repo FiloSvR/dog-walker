@@ -11,6 +11,7 @@
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, ExitStatus, Stdio};
@@ -125,31 +126,59 @@ pub fn launch(
     drop(child.stdin.take());
     let end = wait(&mut child, &task.directory().join(CANCEL_FILE), timeout);
     // The harness may have printed a secret; the log outlives the run (R18).
-    redact_log(task, &plan.policy().secret_values())?;
+    redact_log(task, &plan.policy().secret_bytes())?;
     end
 }
 
 /// Rewrites `harness.log` with the configured secret values replaced. A log with no secret is
 /// left exactly as it is, and the rewrite goes through a temporary file in the task folder, so
 /// a reader sees either the old log or the redacted one.
-fn redact_log(task: &Task, secrets: &[String]) -> Result<(), LaunchError> {
+///
+/// The log is the task folder's, not the harness's: the folder must still be the one created,
+/// the file must be a regular file (a link would be a way out, a FIFO a way to hang), and the
+/// content is bytes, since a harness may print anything.
+fn redact_log(task: &Task, secrets: &[Vec<u8>]) -> Result<(), LaunchError> {
     if secrets.is_empty() {
         return Ok(());
     }
+    task.verify()?;
     let path = task.log_path();
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
+    let before = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(source) => return Err(LaunchError::Log { path, source }),
     };
-    let redacted = crate::sandbox::redact(&text, secrets);
+    if !before.file_type().is_file() {
+        return Err(LaunchError::Log {
+            path,
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a regular file"),
+        });
+    }
+    let text = match fs::read(&path) {
+        Ok(text) => text,
+        Err(source) => return Err(LaunchError::Log { path, source }),
+    };
+    // The file may have been swapped for a link after the check: refusing here is cheaper than
+    // following one into the host.
+    let opened = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) => return Err(LaunchError::Log { path, source }),
+    };
+    if !opened.file_type().is_file() || opened.dev() != before.dev() || opened.ino() != before.ino()
+    {
+        return Err(LaunchError::Log {
+            path,
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "the log was replaced"),
+        });
+    }
+    let redacted = crate::sandbox::redact_bytes(&text, secrets);
     if redacted == text {
         return Ok(());
     }
     let temp = path.with_file_name(format!("harness.log.{}.tmp", std::process::id()));
     let written = (|| {
         let mut file = fs::File::create_new(&temp)?;
-        file.write_all(redacted.as_bytes())?;
+        file.write_all(&redacted)?;
         fs::rename(&temp, &path)
     })();
     match written {
