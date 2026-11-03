@@ -75,3 +75,84 @@ step 2. Everything else stays: the install directory, `CLAUDE_CONFIG_DIR`, the t
 The reason is in `harness.log` next to the handover. `` `X` is in the policy's environment and
 is not set `` means a variable is not exported in this shell; `EROFS … '/tmp'` means the temp
 variables are missing; `Connection error.` means no network or no CA store in the sandbox.
+
+## Codex
+
+Codex keeps its login in its home (`~/.codex/auth.json`, a ChatGPT login, or `OPENAI_API_KEY`),
+and the sandbox mounts neither your home nor the real `~/.codex` (history, past sessions,
+credentials). So give it a private `CODEX_HOME`:
+
+1. Create it and copy the login into it, once:
+
+       mkdir -p ~/.config/dog-walker/codex-home && chmod 700 ~/.config/dog-walker/codex-home
+       install -m 600 ~/.codex/auth.json ~/.config/dog-walker/codex-home/auth.json
+
+   The copy is a credential like the original: keep it mode 600. Codex may rotate its refresh
+   token in place, so if your normal Codex asks you to sign in again, copy it again (or log in
+   from `CODEX_HOME=~/.config/dog-walker/codex-home codex login`). With an API key, skip the copy and
+   list `OPENAI_API_KEY` in `env` and `secrets` instead.
+2. Name the directory in a file, and load it before each run:
+
+       echo "CODEX_HOME=$HOME/.config/dog-walker/codex-home" > ~/.config/dog-walker/codex.env
+       set -a; . ~/.config/dog-walker/codex.env; set +a
+
+3. Add the profile (replace `/home/you`; the model is any Codex model your login can use):
+
+       [profiles.codex]
+       harness = "codex"
+       model = "gpt-6.1-terra"
+       effort = "low"
+       env = ["CODEX_HOME"]
+       read_only_dirs = ["/home/you/.npm-global/lib/node_modules/@openai/codex"]
+       writable_dirs = ["/home/you/.config/dog-walker/codex-home"]
+
+   `read_only_dirs` is Codex's install directory (`readlink -f $(which codex)` shows where; the
+   `node` it needs is a system program and is mounted already). The adapter passes
+   `--dangerously-bypass-approvals-and-sandbox` because dog-walker's sandbox is the boundary.
+4. Check: `dog-walker run codex "Reply with the word ok."` ends `done`.
+
+## dsh
+
+dsh keeps its provider key in `~/.dsh/.env` (`DEEPSEEK_API_KEY`) and its state in `$DSH_HOME`. Use a
+private `DSH_HOME` with the shipped one-task profile, and pass the key as an environment variable:
+
+1. Create the home and the profile, and put the key and the settings dsh needs in a private file:
+
+       D=~/.config/dog-walker
+       mkdir -p $D/dsh-home/profiles $D/dsh-home/tmp && chmod 700 $D/dsh-home
+       cp -r ~/.dsh/profiles/headless $D/dsh-home/profiles/
+       install -m 600 /dev/null $D/dsh.env
+       grep '^DEEPSEEK_API_KEY=' ~/.dsh/.env >> $D/dsh.env
+       cat >> $D/dsh.env <<EOF
+       DSH_HOME=$D/dsh-home
+       TMPDIR=$D/dsh-home/tmp
+       DSH_PERMISSION_MODE=danger-full-access
+       EOF
+       set -a; . $D/dsh.env; set +a
+
+   Do not copy `~/.dsh/.credentials.yaml`: it is a browser-session secret and is not needed.
+2. Add the profile (replace `/home/you`):
+
+       [profiles.dsh]
+       harness = "dsh"
+       dsh_profile = "headless"
+       model = "deepseek"          # a label: the model lives in the dsh profile
+       env = ["DEEPSEEK_API_KEY", "DSH_HOME", "TMPDIR", "DSH_PERMISSION_MODE"]
+       secrets = ["DEEPSEEK_API_KEY"]
+       read_only_dirs = ["/home/you/.npm-global/lib/node_modules/@deepseek-ai/dsh"]
+       writable_dirs = ["/home/you/.config/dog-walker/dsh-home"]
+
+3. Check: `dog-walker run dsh "Reply with the word ok."` ends `done`, and `harness.log` has no
+   `ENOENT` or `landlock` lines.
+
+Why the extra variables:
+
+- `TMPDIR`: dsh makes a temp directory for its output spill and its shell sandbox, and the
+  sandbox mounts no `/tmp`. Without it the task can still end `done`, but dsh's shell tool is
+  broken (`ENOENT … mkdtemp '/tmp/dsh-spill-XXXXXX'`) and the model works around it.
+- `DSH_PERMISSION_MODE=danger-full-access`: dsh's default is `workspace-write` with approvals
+  set to `ask`. Nobody can answer in a headless run, and its own shell sandbox (`landlock`) cannot
+  start inside bwrap (`landlock-run: cannot open rule path: /tmp`). This is dsh's documented mode
+  for an outer sandbox, and dog-walker's is the boundary (D2). The dsh adapter does not set it
+  for you yet, since adapters name variables and do not give them values.
+
