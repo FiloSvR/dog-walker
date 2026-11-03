@@ -39,3 +39,14 @@ _Avoid_: Output, answer
 **Status**:
 Where a task stands: created, running, done, failed, timed-out or cancelled. Only dog-walker sets it.
 _Avoid_: State, phase
+
+**Slot**:
+The record a running task holds in `.dog-walker/run`, named after its id, with the runner's pid
+and start time: it is what a limit counts and what tells another run that the project is
+already being written.
+_Avoid_: Lock, permit, token
+
+**Queue**:
+The wait a task's runner does while the limit for its harness and model is reached: it has a
+task folder and the status `created`, and it can be cancelled before it starts.
+_Avoid_: Pool, batch, backlog

@@ -59,6 +59,14 @@ impl Handover {
         Ok(())
     }
 
+    /// `created` to `cancelled`, with `reason` under the Result heading: the task stopped
+    /// while it was queued, before its harness started.
+    pub fn cancel_before_start(&mut self, reason: &str) -> Result<(), crate::error::StatusError> {
+        self.status = self.status.cancel_before_start()?;
+        self.outcome = Some(reason.to_owned());
+        Ok(())
+    }
+
     /// `running` to `to`, with `outcome` under the Result heading.
     pub fn end(&mut self, to: Status, outcome: &str) -> Result<(), crate::error::StatusError> {
         self.status = self.status.end(to)?;

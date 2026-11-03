@@ -597,6 +597,40 @@ mod tests {
     }
 
     #[test]
+    fn a_limit_is_per_harness_and_model() {
+        let config = parse(
+            "[profiles.a]\nharness='pi'\nmodel='local/qwen'\nmain=true\n\n\
+             [limits]\n'pi/local/qwen' = 2\n'claude/m' = 1\n",
+        )
+        .unwrap();
+        assert_eq!(config.limit(&config.profiles()[0]), Some(2));
+        // Another harness, or another model of the same harness, is not covered.
+        let other = parse("[profiles.a]\nharness='pi'\nmodel='other'\nmain=true\n").unwrap();
+        assert_eq!(other.limit(&other.profiles()[0]), None);
+        let unset = parse(
+            "[profiles.a]\nharness='pi'\nmodel='local/qwen'\nmain=true\n\n[limits]\n'pi/x' = 1\n",
+        )
+        .unwrap();
+        assert_eq!(unset.limit(&unset.profiles()[0]), None);
+    }
+
+    #[test]
+    fn a_bad_limit_is_rejected_by_name() {
+        for (limits, expected) in [
+            ("'pi' = 1", "limits"),
+            ("'pi/' = 1", "limits"),
+            ("'bogus/x' = 1", "limits"),
+            ("'pi/m' = 0", "0"),
+        ] {
+            let error = parse(&format!(
+                "[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\n\n[limits]\n{limits}\n"
+            ))
+            .unwrap_err();
+            assert!(error.to_string().contains(expected), "{limits}: {error}");
+        }
+    }
+
+    #[test]
     fn a_bad_policy_is_rejected_by_name() {
         for (extra, field) in [
             ("git='sometimes'", "git"),

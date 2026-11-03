@@ -37,6 +37,14 @@ case $mode in
       printf 'cwd: %s\n' "$(pwd)"
     } > "$result"
     ;;
+  hold)
+    # Stay until the test writes `release` in the task folder, so a run can be observed.
+    for _ in $(seq 1 400); do
+      [ -e "$DOG_WALKER_TASK_DIR/release" ] && break
+      sleep 0.02
+    done
+    printf 'held and released\n' > "$result"
+    ;;
   slow)
     sleep 0.2
     printf 'slept first\n' > "$result"
@@ -267,6 +275,17 @@ impl Fixture {
     fn handover(&self) -> String {
         let path = self.tasks().join(self.only_task()).join("handover.md");
         fs::read_to_string(path).unwrap()
+    }
+
+    /// The handover of a task by its id prefix.
+    fn handover_of(&self, id: &str) -> String {
+        let folder = fs::read_dir(self.tasks())
+            .unwrap()
+            .flatten()
+            .find(|entry| entry.file_name().to_string_lossy().starts_with(id))
+            .unwrap_or_else(|| panic!("no task folder for {id}"))
+            .path();
+        fs::read_to_string(folder.join("handover.md")).unwrap()
     }
 
     fn log(&self) -> String {
@@ -1433,30 +1452,69 @@ fn at17_a_timeout_inside_the_sandbox_cleans_up() {
 // AT10 (R9): with no limit, three tasks run at once, each in its own folder.
 #[test]
 fn at10_three_tasks_run_at_once() {
-    let fixture = Fixture::new("at10", "slow");
+    let fixture = Fixture::new("at10", "hold");
     let children: Vec<_> = ["One.", "Two.", "Three."]
         .iter()
         .map(|brief| spawn_run(&fixture, &["run", "alpha", brief]))
         .collect();
+    // The three records at once are the proof that they run together, not one after another.
+    wait_for_records(&fixture, 3);
+    let folders = fs::read_dir(fixture.tasks()).unwrap().flatten().count();
+    assert_eq!(folders, 3);
+    release(&fixture, "0001");
+    release(&fixture, "0002");
+    release(&fixture, "0003");
     for child in children {
         let out = wait_with_deadline(&fixture, child, Duration::from_secs(20));
         assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     }
-    let folders = fs::read_dir(fixture.tasks()).unwrap().flatten().count();
-    assert_eq!(folders, 3);
+    assert_eq!(records(&fixture), 0);
 }
 
-// AT11 (R9): a limit of one for a harness and model queues the second task, and a different
-// model is not affected.
+// AT11 (R9): a limit of one for a harness and model holds the second task back, and a
+// different harness is not affected.
 #[test]
 fn at11_a_limit_queues_the_second_task() {
-    let fixture = Fixture::with_timeout("at11", "slow", None);
+    let fixture = Fixture::with_timeout("at11", "hold", None);
     add_config(&fixture, "[limits]\n\"pi/local/qwen\" = 1\n");
     let first = spawn_run(&fixture, &["run", "alpha", "One."]);
     wait_for_slot(&fixture, "0001");
+
     let second = spawn_run(&fixture, &["run", "alpha", "Two."]);
+    // The second has its task folder but has not started: it is waiting for the slot.
+    wait_for_created(&fixture, "0002");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(records(&fixture), 1, "the second run took a slot");
+    assert!(
+        !fixture.project.join(".dog-walker/run/0002.slot").exists(),
+        "the second run recorded a slot"
+    );
+
+    // Another harness has its own, absent, limit: it starts while the pi slot is held.
+    add_config(
+        &fixture,
+        &format!(
+            "[profiles.gamma]\nharness = \"claude\"\nmodel = \"m\"\ncommand = [\"{}\", \"hold\"]\n",
+            fixture.dir.path().join("fake.sh").display()
+        ),
+    );
+    let other = spawn_run(&fixture, &["run", "gamma", "Other."]);
+    wait_for_slot(&fixture, "0003");
+    release(&fixture, "0003");
+    let other = wait_with_deadline(&fixture, other, Duration::from_secs(20));
+    assert_eq!(other.status.code(), Some(0), "stderr: {}", stderr(&other));
+    assert!(
+        !stderr(&other).contains("waiting for a slot"),
+        "{}",
+        stderr(&other)
+    );
+
+    // The first ends, and only then does the second start.
+    release(&fixture, "0001");
     let first = wait_with_deadline(&fixture, first, Duration::from_secs(20));
     assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
+    wait_for_slot(&fixture, "0002");
+    release(&fixture, "0002");
     let second = wait_with_deadline(&fixture, second, Duration::from_secs(20));
     assert_eq!(second.status.code(), Some(0), "stderr: {}", stderr(&second));
     assert!(
@@ -1464,34 +1522,18 @@ fn at11_a_limit_queues_the_second_task() {
         "{}",
         stderr(&second)
     );
-
-    // Another model has no limit of its own: it does not wait for the first.
-    let other = Fixture::with_timeout("at11-other", "slow", None);
-    add_config(&other, "[limits]\n\"pi/local/qwen\" = 1\n");
-    add_config(
-        &other,
-        &format!(
-            "[profiles.beta]\nharness = \"pi\"\nmodel = \"other\"\ncommand = [\"{}\", \"slow\"]\n",
-            other.dir.path().join("fake.sh").display()
-        ),
-    );
-    let beta = spawn_run(&other, &["run", "beta", "Two."]);
-    let out = wait_with_deadline(&other, beta, Duration::from_secs(20));
-    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
-    assert!(
-        !stderr(&out).contains("waiting for a slot"),
-        "{}",
-        stderr(&out)
-    );
 }
 
 // AT12 (R9): two running tasks overlap on the project, and the warning names both ids.
 #[test]
 fn at12_an_overlap_is_warned_about_by_id() {
-    let fixture = Fixture::new("at12", "slow");
+    let fixture = Fixture::new("at12", "hold");
     let first = spawn_run(&fixture, &["run", "alpha", "One."]);
     wait_for_slot(&fixture, "0001");
     let second = spawn_run(&fixture, &["run", "alpha", "Two."]);
+    wait_for_slot(&fixture, "0002");
+    release(&fixture, "0001");
+    release(&fixture, "0002");
     let first = wait_with_deadline(&fixture, first, Duration::from_secs(20));
     assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
     let second = wait_with_deadline(&fixture, second, Duration::from_secs(20));
@@ -1501,20 +1543,144 @@ fn at12_an_overlap_is_warned_about_by_id() {
         "{}",
         stderr(&second)
     );
+
+    // A task started after the other ended overlaps nobody.
+    let third = wait_with_deadline(
+        &fixture,
+        spawn_run(&fixture, &["run", "alpha", "Three."]),
+        Duration::from_secs(20),
+    );
+    assert_eq!(third.status.code(), Some(0), "stderr: {}", stderr(&third));
+    assert!(!stderr(&third).contains("warning:"), "{}", stderr(&third));
+}
+
+// AT11 (R9): a queued task can be cancelled before it starts, and its task folder says so.
+#[test]
+fn at11_a_queued_task_can_be_cancelled() {
+    let fixture = Fixture::with_timeout("at11-cancel", "hold", None);
+    add_config(&fixture, "[limits]\n\"pi/local/qwen\" = 1\n");
+    let first = spawn_run(&fixture, &["run", "alpha", "One."]);
+    wait_for_slot(&fixture, "0001");
+    let second = spawn_run(&fixture, &["run", "alpha", "Two."]);
+    wait_for_created(&fixture, "0002");
+    let cancel = binary()
+        .args(["cancel", "0002"])
+        .current_dir(&fixture.project)
+        .output()
+        .unwrap();
+    assert_eq!(cancel.status.code(), Some(0), "{}", stderr(&cancel));
+    let second = wait_with_deadline(&fixture, second, Duration::from_secs(10));
+    assert_eq!(second.status.code(), Some(1), "stderr: {}", stderr(&second));
+    let handover = fixture.handover_of("0002");
+    assert!(handover.contains("status = \"cancelled\""), "{handover}");
+    assert!(!handover.contains("status = \"running\""), "{handover}");
+    release(&fixture, "0001");
+    let first = wait_with_deadline(&fixture, first, Duration::from_secs(20));
+    assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
+}
+
+// AT11 (R9): a run record is not a slot when it is not a regular file: a FIFO planted in the
+/// run directory neither blocks nor counts.
+#[test]
+fn at11_a_planted_record_is_not_a_slot() {
+    let fixture = Fixture::new("at11-fifo", "result");
+    let dir = fixture.project.join(".dog-walker").join("run");
+    fs::create_dir_all(&dir).unwrap();
+    let made = Command::new("mkfifo")
+        .arg(dir.join("evil.slot"))
+        .output()
+        .unwrap();
+    assert!(made.status.success());
+    let out = wait_with_deadline(
+        &fixture,
+        spawn_run(&fixture, &["run", "alpha", "One."]),
+        Duration::from_secs(20),
+    );
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    // The planted entry is skipped, not deleted.
+    assert!(dir.join("evil.slot").exists());
+}
+
+// AT11 (R9): a symlinked run directory is refused rather than written through.
+#[test]
+fn at11_a_symlinked_run_directory_is_refused() {
+    let fixture = Fixture::new("at11-link", "result");
+    let outside = fixture.dir.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::create_dir_all(fixture.project.join(".dog-walker")).unwrap();
+    std::os::unix::fs::symlink(&outside, fixture.project.join(".dog-walker").join("run")).unwrap();
+    let out = fixture.run(&["run", "alpha", "One."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("not a directory of its own"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!fixture.tasks().exists());
+    assert!(!outside.join("0001.slot").exists());
+}
+
+/// The run records directory.
+fn run_dir(fixture: &Fixture) -> PathBuf {
+    fixture.project.join(".dog-walker").join("run")
+}
+
+/// How many run records exist.
+fn records(fixture: &Fixture) -> usize {
+    match fs::read_dir(run_dir(fixture)) {
+        Ok(entries) => entries.flatten().count(),
+        Err(_) => 0,
+    }
+}
+
+/// Waits until `n` records exist at once.
+fn wait_for_records(fixture: &Fixture, n: usize) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while records(fixture) < n && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(records(fixture), n, "the runs did not all take a slot");
 }
 
 /// Waits until a task has written its slot record: that is what a second task reads.
 fn wait_for_slot(fixture: &Fixture, id: &str) {
-    let record = fixture
-        .project
-        .join(".dog-walker")
-        .join("run")
-        .join(format!("{id}.slot"));
+    let record = run_dir(fixture).join(format!("{id}.slot"));
     let deadline = Instant::now() + Duration::from_secs(10);
     while !record.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(record.exists(), "task {id} did not record its slot");
+}
+
+/// Waits until a task's handover exists with status `created`: it has its folder but has not
+/// started.
+fn wait_for_created(fixture: &Fixture, id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if fixture.tasks().read_dir().is_ok_and(|mut entries| {
+            entries.any(|entry| {
+                entry.is_ok_and(|entry| entry.file_name().to_string_lossy().starts_with(id))
+            })
+        }) {
+            let handover = fixture.handover_of(id);
+            if handover.contains("status = \"created\"") {
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("task {id} never waited in the created state");
+}
+
+/// Lets a held task finish: the fake harness waits for `release` in its task folder.
+fn release(fixture: &Fixture, id: &str) {
+    let folder = fs::read_dir(fixture.tasks())
+        .unwrap()
+        .flatten()
+        .find(|entry| entry.file_name().to_string_lossy().starts_with(id))
+        .unwrap_or_else(|| panic!("no task folder for {id}"))
+        .path();
+    fs::write(folder.join("release"), "go\n").unwrap();
 }
 
 /// Appends a table or a profile to the fixture's config.

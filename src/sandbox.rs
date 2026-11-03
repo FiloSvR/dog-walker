@@ -517,6 +517,12 @@ impl Plan {
         {
             command.arg("--ro-bind").arg(&git).arg(&git);
         }
+        // The run records belong to the runner: a harness that could write one could block
+        // the next run (R9).
+        let records = project.join(".dog-walker").join("run");
+        if records.is_dir() {
+            command.arg("--ro-bind").arg(&records).arg(&records);
+        }
         // The handover belongs to dog-walker: the harness may read it, not rewrite its status
         // or brief (R10, R12).
         if handover.exists() {

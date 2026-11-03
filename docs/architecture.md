@@ -143,20 +143,29 @@ refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit 
 
 ## Concurrency
 
-Every `run` writes a record to `.dog-walker/run/<id>.slot` (pid, id, harness, model) before it
-starts its harness, and removes it when it ends; a record whose pid is gone is stale, and the
-next runner that sees one removes it. The user's config can set `[limits]` per `harness/model`
-(`"pi/local/qwen" = 1`); a runner over its limit waits for a record to go, says so on stderr,
-and starts as soon as one does. With no limit, as many tasks run as the user starts. The count
-is advisory: two runners can see the same free slot, which is enough for a limit that warns
-rather than refuses.
+Every `run` writes a record to `.dog-walker/run/<id>.slot` (id, runner's pid, its start time,
+harness, model) before it starts its harness, and removes it when it ends; a record whose
+runner is gone — the pid is gone, or it belongs to another process now — is stale, and the
+next runner that sees one removes it. The record is written through a temporary file, so a
+reader never sees a partial one, and the directory is mounted read-only inside the sandbox: a
+harness cannot add, remove or block the next run through it.
+
+The user's config can set `[limits]` per `harness/model` (`"pi/local/qwen" = 1`); a runner over
+its limit waits for a record to go, logs that it is waiting when it starts to, and starts as
+soon as one does. With no limit, as many tasks run as the user starts. The count is advisory:
+two runners can see the same free slot and both start, which is enough for a limit that queues
+best effort rather than schedules. While it waits, a task keeps its folder and the status
+`created`; a cancel (the marker, Ctrl-C or SIGTERM) ends it as `cancelled` before its harness
+ever runs, and its timeout starts when it does.
 
 Every task writes the project, so any two live tasks have overlapping write scopes. A run that
-starts while another is live logs `warning: task <id> overlaps task <other>'s write scope (the
-project)`, naming both ids.
+starts while it can see another record logs `warning: task <id> overlaps task <other>'s write
+scope (the project)`, naming both ids; two runners that read before either writes miss it.
 
 Checks: `at10_three_tasks_run_at_once`, `at11_a_limit_queues_the_second_task`,
-`at12_an_overlap_is_warned_about_by_id`, and the unit tests in `src/slots.rs`.
+`at11_a_queued_task_can_be_cancelled`, `at11_a_planted_record_is_not_a_slot`,
+`at11_a_symlinked_run_directory_is_refused`, `at12_an_overlap_is_warned_about_by_id`, and the
+unit tests in `src/slots.rs`.
 
 ## Stopping a task
 

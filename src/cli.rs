@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
-use crate::config::{self, Config};
+use crate::config::{self, Config, Profile};
 use crate::error::{CliError, ConfigError, Error};
 use crate::handover::{self, Handover};
 use crate::launch::{self, End};
@@ -250,6 +250,8 @@ fn run_task(
     let plan = Plan::from_policy(policy, &project, unsandboxed)?;
     // A sandbox that cannot be set up is a config error, not a failed task.
     plan.check(profile, &project)?;
+    // The run directory is the runner's: a symlink there is a config error, not a task.
+    slots::check(&project)?;
     let task = Task::create(&project, &brief)?;
     let handover_path = task.handover_path();
     let mut handover = Handover::new(&task.id(), &profile.name, &brief)
@@ -263,13 +265,9 @@ fn run_task(
     // A slot per running task: the limit is per harness and model, and the slot's record is
     // what tells the next runner that this task is writing the project too (R9).
     let limit = config.limit(profile);
-    if let Some(limit) = limit {
-        log(
-            stderr,
-            &format!("dog-walker: waiting for a slot (at most {limit} at once)"),
-        );
-    }
-    let slot = slots::acquire(&project, profile, limit, &task.id().to_string())?;
+    let Some(slot) = take_slot(&project, profile, &task, limit, &mut handover, stderr)? else {
+        return Ok(exit::TASK_NOT_DONE);
+    };
     for other in slot.overlaps() {
         log(
             stderr,
@@ -310,6 +308,46 @@ fn run_task(
     } else {
         exit::TASK_NOT_DONE
     })
+}
+
+/// Takes the run's slot; `None` when the wait was cut short, and then the task is ended as
+/// cancelled before its harness ever started.
+fn take_slot(
+    project: &Path,
+    profile: &Profile,
+    task: &Task,
+    limit: Option<usize>,
+    handover: &mut Handover,
+    stderr: &mut dyn Write,
+) -> Result<Option<slots::Slot>, Error> {
+    let cancel = task.directory().join(launch::CANCEL_FILE);
+    let mut waiting = || {
+        log(
+            stderr,
+            &format!(
+                "dog-walker: task {} waiting for a slot (at most {} at once)",
+                task.id(),
+                limit.unwrap_or_default()
+            ),
+        );
+    };
+    let slot = slots::acquire(
+        project,
+        profile,
+        limit,
+        &task.id().to_string(),
+        &|| launch::interrupted() || cancel.exists(),
+        &mut waiting,
+    )?;
+    if slot.is_none() {
+        handover.cancel_before_start("The task was cancelled while it waited for a slot.")?;
+        save(handover, task)?;
+        log(
+            stderr,
+            &format!("dog-walker: task {} cancelled in the queue", task.id()),
+        );
+    }
+    Ok(slot)
 }
 
 /// Saves the handover, once the task folder is still the one that was created.

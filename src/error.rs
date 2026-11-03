@@ -179,6 +179,8 @@ pub enum SlotError {
     Dir { path: PathBuf, source: io::Error },
     #[error("cannot write the run record {}: {source}", path.display())]
     Record { path: PathBuf, source: io::Error },
+    #[error("the run directory {} is not a directory of its own", path.display())]
+    UnsafeDir { path: PathBuf },
 }
 
 /// Everything that can make a command fail.
