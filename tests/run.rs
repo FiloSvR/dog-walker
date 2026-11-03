@@ -791,7 +791,7 @@ fn a_profile_without_a_command_or_adapter_is_a_usage_error() {
     fs::write(
         &config,
         "[profiles.zeta]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n\n\
-         [profiles.beta]\nharness = \"codex\"\nmodel = \"m\"\n",
+         [profiles.beta]\nharness = \"dsh\"\nmodel = \"m\"\n",
     )
     .unwrap();
     let out = binary()

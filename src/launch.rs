@@ -472,8 +472,8 @@ mod tests {
         let root = project("no-command");
         let task = Task::create(&root, "a brief").unwrap();
         let mut profile = profile(Vec::new());
-        // Codex has no adapter yet; Pi does, and would start the real binary.
-        profile.harness = Harness::Codex;
+        // dsh has no adapter yet; the others would start a real binary.
+        profile.harness = Harness::Dsh;
         profile.command = None;
         let error = launch(
             &profile,

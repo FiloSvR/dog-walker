@@ -83,15 +83,48 @@ impl Adapter for Pi {
     }
 }
 
+/// Codex, run unattended: `codex exec -m <model> --dangerously-bypass-approvals-and-sandbox
+/// --skip-git-repo-check --ephemeral [-c model_reasoning_effort="<effort>"] -- <brief>`.
+///
+/// The bypass is the documented mode for an externally sandboxed environment, which is what
+/// bwrap is here (D2); `--skip-git-repo-check` runs it in a project that is not a repository,
+/// and `--ephemeral` keeps sessions out of a home directory the sandbox does not mount.
+pub struct Codex;
+
+impl Adapter for Codex {
+    fn argv(&self, profile: &Profile) -> Vec<OsString> {
+        let mut argv: Vec<OsString> = vec![
+            "codex".into(),
+            "exec".into(),
+            "--dangerously-bypass-approvals-and-sandbox".into(),
+            "--skip-git-repo-check".into(),
+            "--ephemeral".into(),
+        ];
+        if !profile.model.is_empty() {
+            argv.push("-m".into());
+            argv.push(profile.model.clone().into());
+        }
+        if let Some(effort) = &profile.effort {
+            // Codex takes the reasoning effort as a configuration override.
+            argv.push("-c".into());
+            argv.push(format!("model_reasoning_effort=\"{effort}\"").into());
+        }
+        argv.push("--".into());
+        argv
+    }
+}
+
 /// The adapter for a harness, when one is written.
 pub fn of(harness: Harness) -> Option<&'static dyn Adapter> {
     static CLAUDE: ClaudeCode = ClaudeCode;
     static PI: Pi = Pi;
+    static CODEX: Codex = Codex;
     match harness {
         Harness::Claude => Some(&CLAUDE),
         Harness::Pi => Some(&PI),
+        Harness::Codex => Some(&CODEX),
         // The others are their own issues; until then a profile names `command`.
-        Harness::Codex | Harness::Dsh => None,
+        Harness::Dsh => None,
     }
 }
 
@@ -252,9 +285,41 @@ mod tests {
     }
 
     #[test]
+    fn codex_runs_wired_for_unattended_use() {
+        let mut codex = profile(Harness::Codex, "gpt-5-codex");
+        codex.effort = Some("high".to_owned());
+        let printed: Vec<String> = argv(&codex)
+            .unwrap()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            printed,
+            [
+                "codex",
+                "exec",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--skip-git-repo-check",
+                "--ephemeral",
+                "-m",
+                "gpt-5-codex",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "--"
+            ],
+            "{printed:?}"
+        );
+        let full = with_brief(&argv(&codex).unwrap(), "- fix it");
+        assert_eq!(
+            full.last().map(|arg| arg.to_string_lossy().into_owned()),
+            Some("- fix it".to_owned())
+        );
+    }
+
+    #[test]
     fn a_harness_without_an_adapter_is_named() {
-        let error = argv(&profile(Harness::Codex, "gpt-5")).unwrap_err();
-        assert!(error.to_string().contains("`codex`"), "{error}");
+        let error = argv(&profile(Harness::Dsh, "deepseek")).unwrap_err();
+        assert!(error.to_string().contains("`dsh`"), "{error}");
         assert!(error.to_string().contains("not written yet"), "{error}");
     }
 
