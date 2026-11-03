@@ -66,6 +66,7 @@ From the repo root (a git repository; `.dog-walker/` is ignored):
 | `02-sandbox-probe` | the sandbox from inside: project writes work, outside writes, `git commit` and a secret do not leak |
 | `03-no-result-path` | a brief that never names the result file still ends `done`: the launcher adds it |
 | `04-review-worker-diff` | the full loop: a `reviewer` reviews a `worker`'s uncommitted change from its handover |
+| `06a-thin` and `06b-rich` | the same comparison on a question spread over three files; the one that shows a saving on Pi and Codex |
 | `05a-thin` and `05b-rich` | the same question with a bare brief and with one that hands over what the main harness knows: the handover's `tokens`, `turns` and `cost_usd` show what the second saves |
 
 If a test fails before the model answers, the cause is usually setup: `harness.log` says
@@ -82,15 +83,15 @@ which (a missing install directory, `Connection error.` for a missing CA store o
 
 3. Read the verdict, then decide yourself: the reviewer only reports, and nothing is committed.
 
-## Does a richer brief save tokens (tests 05a and 05b)
+## Does a richer brief save tokens (tests 05 and 06)
 
 The brief is the only way the main harness can hand over what it has already learned, so a
-brief that leaves it out makes the worker pay again (R23). These two briefs ask one question,
-and `05b-rich` also says where to look, what is settled, what to skip and how to verify. Run
-each three times on the same profile (a model's cost varies from run to run), then read what
-each task used:
+brief that leaves it out makes the worker pay again (R23). Each pair asks one question (`05` is
+small, `06` spans three files and shows more), and the rich brief also says where to look, what
+is settled, what to skip and how to verify. Run each three times on the same profile (a model's
+cost varies from run to run), then read what each task used:
 
-    for b in 05a-thin 05b-rich; do
+    for b in 06a-thin 06b-rich; do
       for i in 1 2 3; do target/debug/dog-walker run worker --file manual-tests/briefs/$b.md; done
     done
     grep -H '^\(tokens\|turns\|cost_usd\) ' .dog-walker/tasks/*/handover.md | tail -18

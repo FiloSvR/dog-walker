@@ -70,3 +70,40 @@ Run after a worker task has left an uncommitted change (the placeholder is the w
   (22% fewer) and 7 against 4 turns. A task that only answers "ok" costs about 5000 tokens on this
   profile (the harness's own prompt and tools), so most of the saving is in the exploration,
   which is the part a brief can remove.
+- The same pair on Codex (`gpt-6.1-terra`, low effort, three runs each, all correct; Codex reports
+  only a total): `05a-thin` 18147, 9597 and 9714 tokens; `05b-rich` 10410, 16947 and 9445.
+  Medians 9714 against 10410: no saving. The rich runs used 2 commands against 3 or 4, but each
+  ran `cat src/launch.rs` on the whole file, and a task that only answers costs about 9000 tokens
+  there. The question is too small to show a brief's effect on Codex; use 06 below.
+
+## 06a-thin and 06b-rich
+
+A question whose answer is spread over three files: where a configured secret is redacted.
+
+- Both end `done` with a list that names, in `src/cli.rs`, the brief, the sandbox section and the
+  outcome (each through `sandbox::redact`), and, in `src/launch.rs`, the log and `result.md`
+  (through `redact_file` and `redact_result`, which use `sandbox::redact_bytes`). A list that
+  misses a place is a failed run; do not count its usage.
+- Repo clean. Result item (5) tells which files the brief left out: the thin runs name
+  `AGENTS.md` and `docs/agents/*` (the repo's instructions), the rich runs name none.
+- Ten runs of each brief on each harness (2026-11-03; every answer correct). Tokens, sorted:
+
+  | Harness | Brief | Median | Mean | Range |
+  |---|---|---|---|---|
+  | Pi, `glm-5.3-flash` | thin | 65043 (9.5 turns) | 61275 | 23133 to 86013 |
+  | Pi | rich | 35881 (6 turns) | 47871 | 22891 to 144373 |
+  | Codex, `gpt-6.1-terra` low | thin | 22022 | 22163 | 13221 to 34760 |
+  | Codex | rich | 12741 | 13906 | 7619 to 30592 |
+
+  At the median the rich brief used 45% fewer tokens on Pi and 42% fewer on Codex. The spread is
+  wide and the ranges overlap: the cheapest thin Pi run (23133; the next was 43846) cost less than nine of the ten rich runs,
+  and one rich Pi run cost more than any other (144373), so judge a brief by several runs. On
+  Codex the rich outlier (30592) made the fewest commands of its group; its extra cost was
+  reasoning, which a brief cannot remove.
+- Why the Pi outlier cost what it did: Pi's `tokens` add up each turn's whole context, so a big
+  read is paid again on every later turn. That run read `src/cli.rs` and `src/launch.rs` in full
+  (about 13000 tokens in one turn, then carried through six more) although the brief named only
+  functions. A rich brief that names a file does not stop the worker reading all of it: give the
+  lines (`src/cli.rs` 288 to 368) and say to read only those.
+- Reading both pairs together: a brief saves most when the answer needs exploring across files,
+  and a little or nothing when one `cat` answers it.
