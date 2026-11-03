@@ -51,8 +51,42 @@ impl Home {
         self.harness("dsh", "lib/node_modules/@deepseek-ai/dsh/lib/bin.js");
     }
 
-    /// Runs `init` with `args`, `stdin` as the user's answers, and this home.
+    /// Runs `init` globally unless `args` say otherwise, with `stdin` as the user's answers.
     fn init(&self, args: &[&str], stdin: &str) -> Output {
+        if args.contains(&"--scope") {
+            self.init_raw(args, stdin)
+        } else {
+            let mut all = vec!["--scope", "global"];
+            all.extend_from_slice(args);
+            self.init_raw(&all, stdin)
+        }
+    }
+
+    /// The directory that holds this project's own config and private files.
+    fn project_dir(&self) -> PathBuf {
+        let projects = self.0.join(".config/dog-walker/projects");
+        fs::read_dir(projects)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .next()
+            .unwrap()
+    }
+
+    /// Runs `dog-walker args` in `cwd` with this home.
+    fn dw(&self, args: &[&str], cwd: &Path) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_dog-walker"))
+            .args(args)
+            .env_clear()
+            .env("HOME", &self.0)
+            .env("PATH", self.0.join("bin"))
+            .current_dir(cwd)
+            .output()
+            .unwrap()
+    }
+
+    /// Runs `init` with exactly `args`, `stdin` as the user's answers, and this home.
+    fn init_raw(&self, args: &[&str], stdin: &str) -> Output {
         let mut child = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
             .arg("init")
             .args(args)
@@ -260,7 +294,7 @@ fn at31_the_line_goes_in_the_project_by_default() {
     fs::create_dir_all(home.path().join(".claude")).unwrap();
     let global = home.path().join(".claude/CLAUDE.md");
     fs::write(&global, "# mine\n").unwrap();
-    let out = home.init(
+    let out = home.init_raw(
         &[
             "--main",
             "claude",
@@ -284,7 +318,7 @@ fn at31_the_line_goes_in_the_project_by_default() {
 fn at31_the_scope_is_asked() {
     let home = Home::new("scopeask");
     home.all_harnesses();
-    let out = home.init(
+    let out = home.init_raw(
         &["--main", "claude", "--worker", "no", "--reviewer", "no"],
         "everywhere\nglobal\ny\n",
     );
@@ -300,17 +334,76 @@ fn at31_the_scope_is_asked() {
     assert!(!home.path().join("CLAUDE.md").exists());
 }
 
-// AT31 (R25): a harness with no instructions file is not asked where to put one.
+// AT31 (R25, D20): a project set up on its own gets its own config and private files outside the
+// repository; that project uses it, the global config is not written, and another directory
+// still uses the global one.
 #[test]
-fn at31_a_harness_without_a_file_is_not_asked_for_a_scope() {
-    let home = Home::new("noscope");
+fn at31_a_project_gets_its_own_config() {
+    let home = Home::new("ownconfig");
     home.all_harnesses();
-    let out = home.init(
-        &["--main", "pi", "--worker", "no", "--reviewer", "no"],
-        "y\n",
+    let project = home.path().join("app");
+    fs::create_dir_all(&project).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
+        .args([
+            "init", "--scope", "project", "--main", "claude", "--worker", "codex",
+        ])
+        .args(["--reviewer", "no", "--yes"])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", home.path().join("bin"))
+        .current_dir(&project)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let own = home.project_dir();
+    assert!(
+        own.file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("app-")
+    );
+    let config = fs::read_to_string(own.join("config.toml")).unwrap();
+    assert!(config.contains("[profiles.worker]"), "{config}");
+    assert!(own.join("worker.env").is_file());
+    assert_eq!(mode(&own.join("worker")), 0o700);
+    assert!(project.join("CLAUDE.md").is_file());
+    assert!(!home.config().exists());
+    let here = home.dw(&["profiles"], &project);
+    assert_eq!(here.status.code(), Some(0), "{}", stderr(&here));
+    assert!(String::from_utf8_lossy(&here.stdout).contains("worker"));
+    // Another directory has no config of its own and no global one.
+    let elsewhere = home.dw(&["profiles"], home.path());
+    assert_eq!(elsewhere.status.code(), Some(2), "{}", stderr(&elsewhere));
+}
+
+// AT31 (R25, D20): a main harness with no instructions file is still set up for the project, and
+// gets the line printed.
+#[test]
+fn at31_pi_main_in_a_project_gets_the_line_printed() {
+    let home = Home::new("pimainproject");
+    home.all_harnesses();
+    let out = home.init_raw(
+        &[
+            "--scope",
+            "project",
+            "--main",
+            "pi",
+            "--worker",
+            "no",
+            "--reviewer",
+            "no",
+            "--yes",
+        ],
+        "",
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert!(!stderr(&out).contains("scope:"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("run `dog-walker instructions` first"));
+    assert!(home.project_dir().join("config.toml").is_file());
+    assert!(!home.path().join("AGENTS.md").exists());
 }
 
 // AT31 (R25): Codex as the main harness gets its AGENTS.md.
@@ -369,9 +462,8 @@ fn at31_pi_main_gets_the_line_printed() {
 fn at31_the_questions_can_be_answered_on_stdin() {
     let home = Home::new("ask");
     home.all_harnesses();
-    // main: harness, model; worker: harness, model, credential variable; reviewer: no; scope
-    // (the project, by an empty line); confirm.
-    let answers = "claude\n\npi\nopenrouter/z-ai/glm\nMY_KEY\nno\n\ny\n";
+    // main: harness, model; worker: harness, model, credential variable; reviewer: no; confirm.
+    let answers = "claude\n\npi\nopenrouter/z-ai/glm\nMY_KEY\nno\ny\n";
     let out = home.init(&[], answers);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let config = fs::read_to_string(home.config()).unwrap();
@@ -389,7 +481,7 @@ fn at31_nothing_is_written_without_a_yes() {
     home.all_harnesses();
     let out = home.init(
         &["--main", "claude", "--worker", "no", "--reviewer", "no"],
-        "project\nn\n",
+        "n\n",
     );
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     assert!(!home.config().exists());
@@ -449,8 +541,8 @@ fn at31_an_existing_config_is_never_changed() {
     assert_eq!(config.matches("[profiles.worker]").count(), 1, "{config}");
     assert!(config.contains("[profiles.reviewer]"), "{config}");
     // The instructions go to the existing main harness's file (Codex), not the new answer's.
-    assert!(home.path().join("AGENTS.md").exists());
-    assert!(!home.path().join("CLAUDE.md").exists());
+    assert!(home.path().join(".codex/AGENTS.md").exists());
+    assert!(!home.path().join(".claude/CLAUDE.md").exists());
 }
 
 // AT31 (R25): a harness that is not installed still gets a profile, with a note to add its

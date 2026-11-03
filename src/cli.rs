@@ -92,7 +92,7 @@ enum Command {
         /// A secondary for reviews, as `harness[:model]`, or `no`
         #[arg(long, value_name = "HARNESS[:MODEL]|no")]
         reviewer: Option<String>,
-        /// Where the instructions line goes: this `project`'s file or the `global` one; asked when
+        /// Set up this `project` (its own config and instructions file) or `global`ly; asked when
         /// not given
         #[arg(long, value_name = "project|global")]
         scope: Option<String>,
@@ -242,14 +242,28 @@ fn doctor(
 
 /// Where the config is: the command line's, or the default.
 fn config_path(cli: &Cli) -> Result<PathBuf, ConfigError> {
-    match &cli.config {
-        Some(path) => Ok(path.clone()),
-        None => config::default_path(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )
-        .ok_or(ConfigError::NoConfigPath),
+    if let Some(path) = &cli.config {
+        return Ok(path.clone());
     }
+    let global = global_config_path()?;
+    // A project that was set up with its own config uses it, and only it (D20).
+    Ok(project_config_path(&global)
+        .filter(|path| path.is_file())
+        .unwrap_or(global))
+}
+
+fn global_config_path() -> Result<PathBuf, ConfigError> {
+    config::default_path(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+    .ok_or(ConfigError::NoConfigPath)
+}
+
+/// Where this directory's own config would be, whether or not it exists.
+fn project_config_path(global: &Path) -> Option<PathBuf> {
+    let project = fs::canonicalize(std::env::current_dir().ok()?).ok()?;
+    config::project_config_path(global, &project)
 }
 
 /// Reads the config the command line points at.
@@ -267,16 +281,31 @@ fn init(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<u8, Error> {
-    let path = config_path(cli)?;
+    let configs = if let Some(path) = &cli.config {
+        setup::Configs {
+            global: path.clone(),
+            project: path.clone(),
+        }
+    } else {
+        let global = global_config_path()?;
+        let project = project_config_path(&global).ok_or(ConfigError::NoConfigPath)?;
+        setup::Configs { global, project }
+    };
     let home = std::env::var_os("HOME")
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
         .ok_or(ConfigError::NoConfigPath)?;
     let host = setup::Host {
         home,
-        config_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
+        config_dir: PathBuf::new(),
         path: std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect(),
-        project: std::env::current_dir().map_err(|source| crate::error::SetupError::Io {
+        project: fs::canonicalize(std::env::current_dir().map_err(|source| {
+            crate::error::SetupError::Io {
+                path: PathBuf::from("."),
+                source,
+            }
+        })?)
+        .map_err(|source| crate::error::SetupError::Io {
             path: PathBuf::from("."),
             source,
         })?,
@@ -290,7 +319,7 @@ fn init(
     };
     setup::run_init(
         &options,
-        &path,
+        &configs,
         &host,
         &mut io::stdin().lock(),
         stdout,

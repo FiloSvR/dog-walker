@@ -462,7 +462,8 @@ pub struct Options {
     pub main: Option<String>,
     pub worker: Option<String>,
     pub reviewer: Option<String>,
-    /// `project` or `global`; asked when not given (and the project when `yes` skips asking).
+    /// `project` or `global`: whose config and instructions file; asked when not given (and the
+    /// project when `yes` skips asking).
     pub scope: Option<String>,
     pub yes: bool,
 }
@@ -590,13 +591,26 @@ struct Plan {
 /// to `err`; the config path goes to `out`.
 pub fn run_init(
     options: &Options,
-    config_path: &Path,
+    configs: &Configs,
     host: &Host,
     input: &mut dyn BufRead,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), SetupError> {
-    let plan = build(options, config_path, host, input, err)?;
+    let scope = scope_for(options, configs, input, err)?;
+    let config_path = match scope {
+        Scope::Project => &configs.project,
+        Scope::Global => &configs.global,
+    };
+    // Each profile's private directory and env file live beside the config it goes in.
+    let host = &Host {
+        config_dir: config_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default(),
+        ..host.clone()
+    };
+    let plan = build(options, scope, config_path, host, input, err)?;
     preflight(&plan, host)?;
     show(&plan, err)?;
     if plan.profiles.is_empty() && plan.instructions.is_none() {
@@ -621,6 +635,7 @@ fn confirmed(input: &mut dyn BufRead, err: &mut dyn Write) -> Result<bool, Setup
 
 fn build(
     options: &Options,
+    scope: Scope,
     config_path: &Path,
     host: &Host,
     input: &mut dyn BufRead,
@@ -679,7 +694,6 @@ fn build(
     };
     plan.notes
         .extend(plan.profiles.iter().flat_map(|p| p.notes.clone()));
-    let scope = scope_for(main_harness, options, host, input, err)?;
     match instructions_file(main_harness, scope, host) {
         Some(file) => {
             let current = match fs::read_to_string(&file) {
@@ -702,12 +716,19 @@ fn build(
     Ok(plan)
 }
 
-/// Where the instructions line goes: from the command line, or asked, or the project when
-/// `--yes` says not to ask. Not asked for a harness with no file to write.
+/// The two configs `init` may write: the user's global one, and this project's (D20). They are
+/// the same file when the command line names a config.
+#[derive(Debug, Clone)]
+pub struct Configs {
+    pub global: PathBuf,
+    pub project: PathBuf,
+}
+
+/// Whether this is set up for the project or globally: from the command line, or asked, or the
+/// project when `--yes` says not to ask.
 fn scope_for(
-    harness: Harness,
     options: &Options,
-    host: &Host,
+    configs: &Configs,
     input: &mut dyn BufRead,
     err: &mut dyn Write,
 ) -> Result<Scope, SetupError> {
@@ -717,21 +738,15 @@ fn scope_for(
             why,
         });
     }
-    let (Some(project), Some(global)) = (
-        instructions_file(harness, Scope::Project, host),
-        instructions_file(harness, Scope::Global, host),
-    ) else {
-        return Ok(Scope::Project);
-    };
-    if options.yes {
+    if options.yes || configs.global == configs.project {
         return Ok(Scope::Project);
     }
     output::line(
         err,
         &format!(
-            "the dog-walker line can go in this project's file ({}) or in your global one ({}), which tells every project",
-            project.display(),
-            global.display()
+            "project: this project's own profiles in {} and its CLAUDE.md or AGENTS.md\nglobal: the profiles in {} and the main harness's global file, which tell every project",
+            configs.project.display(),
+            configs.global.display()
         ),
     )?;
     loop {

@@ -186,7 +186,7 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     `reviewer` optional) for a harness and model, finds the install directory from where the
     program resolves, writes the profile's sandbox part (`docs/setup.md` as code), creates a
     private directory (700) and an env file (600) with the non-secret lines, and appends a marked
-    block to the main harness's instructions file, the project's by default and the global one when the user says so (`--scope`, or asked). It shows the plan and asks first
+    block to the main harness's instructions file (see D20 for the project and global scopes). It shows the plan and asks first
     (`--yes` skips), appends to an existing config and never edits it, and creates a file that
     exists never. It asks for the name of the credential variable and never reads, copies or
     writes a value: the token and the Codex login are printed as steps. Only Claude Code
@@ -207,3 +207,16 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     is the user's. Not done: a lock between two `init` runs at the same time (the second one
     refuses when it finds the profile there).
 
+
+20. **A project can have a config of its own, kept outside the repository.** `init` asks first
+    whether it sets up the project or the user globally (`--scope`; `--yes` takes the project).
+    A project's profiles go to `<config dir>/projects/<name>-<hash>/config.toml`, keyed by the
+    project's canonical path (`<hash>` is FNV-1a, stable across Rust versions), with each
+    profile's private directory and env file beside it. Every command run in that directory
+    reads that config and no other; any directory without one reads the global config. A
+    `--config` option overrides both. Rejected: profiles in the repository's
+    `.dog-walker/config.toml` (a cloned repository could then define a profile that mounts the
+    home or runs a command, against R3; that file stays tighten-only); merging the project
+    config over the global one (it would make the effective policy depend on two files and hide
+    which profile a task really ran with). Not done: a way to share a project's setup with a
+    team (a committed profiles file would need an explicit trust step, as direnv's `allow`).

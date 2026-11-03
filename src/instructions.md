@@ -111,6 +111,9 @@ A task should not start tasks of its own: a `run` called from inside one is refu
 marker it gets (and, outside the sandbox, by the dog-walker above it in the process tree), and
 the task that called it is unaffected.
 
+Profiles come from the config of the directory you run in: the project's own, if `init` set
+one up, else the global one. A repository's `.dog-walker/config.toml` never defines profiles.
+
 A repository can tighten the policy in `.dog-walker/config.toml` (the same keys: `network`,
 `git`, `read_only_dirs`, `writable_dirs`, `env`), and a task can tighten `network` and `git`
 with `--network off` and `--git read-only`. Neither can loosen what the profile allows: a
