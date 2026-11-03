@@ -373,7 +373,7 @@ pub fn watch_for_interrupts() -> Result<(), LaunchError> {
 }
 
 /// Whether Ctrl-C (or a TERM to the runner) has arrived.
-fn interrupted() -> bool {
+pub fn interrupted() -> bool {
     INTERRUPTED
         .get()
         .is_some_and(|flag| flag.load(Ordering::Relaxed))

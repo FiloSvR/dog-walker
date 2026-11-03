@@ -91,9 +91,13 @@ fn only_the_output_module_writes() -> io::Result<()> {
             &fs::read_to_string(&path)?,
             is_top_level(&src, &path, "main.rs"),
         );
-        // The handover writes its own document, and the launcher rewrites the harness log to
-        // redact a secret: file writes, not the process's streams.
-        if is_top_level(&src, &path, "handover.rs") || is_top_level(&src, &path, "launch.rs") {
+        // The handover writes its own document, the launcher rewrites the harness log to
+        // redact a secret, and the slots write the run records: file writes, not the
+        // process's streams.
+        if is_top_level(&src, &path, "handover.rs")
+            || is_top_level(&src, &path, "launch.rs")
+            || is_top_level(&src, &path, "slots.rs")
+        {
             found.retain(|pattern| !FILE_WRITES.contains(pattern));
         }
         assert!(
@@ -148,6 +152,27 @@ fn the_exemptions_are_exact_paths() {
         src,
         Path::new("/repo/src/sub/handover.rs"),
         "handover.rs"
+    ));
+    // The launcher and the slots own a file of their own too, and only at the top level.
+    assert!(is_top_level(
+        src,
+        Path::new("/repo/src/launch.rs"),
+        "launch.rs"
+    ));
+    assert!(is_top_level(
+        src,
+        Path::new("/repo/src/slots.rs"),
+        "slots.rs"
+    ));
+    assert!(!is_top_level(
+        src,
+        Path::new("/repo/src/sub/launch.rs"),
+        "launch.rs"
+    ));
+    assert!(!is_top_level(
+        src,
+        Path::new("/repo/src/sub/slots.rs"),
+        "slots.rs"
     ));
     assert!(!is_top_level(
         src,

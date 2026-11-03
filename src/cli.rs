@@ -11,12 +11,13 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
-use crate::config::{self, Config};
+use crate::config::{self, Config, Profile};
 use crate::error::{CliError, ConfigError, Error};
 use crate::handover::{self, Handover};
 use crate::launch::{self, End};
 use crate::output::{self, exit};
 use crate::sandbox::{self, Plan, Policy, Request};
+use crate::slots;
 use crate::status::Status;
 use crate::task::{Task, TaskId};
 
@@ -259,6 +260,8 @@ fn run_task(
     let plan = Plan::from_policy(policy, &project, unsandboxed)?;
     // A sandbox that cannot be set up is a config error, not a failed task.
     plan.check(profile, &project)?;
+    // The run directory is the runner's: a symlink there is a config error, not a task.
+    slots::check(&project)?;
     // What the record keeps is redacted, down to the folder's name: the harness reads the
     // brief as written, and the task folder is dog-walker's (R18).
     let secrets = plan.policy().secret_values();
@@ -275,6 +278,21 @@ fn run_task(
     // abandon a task.
     output::path(stdout, &handover_path)?;
     log(stderr, &format!("dog-walker: task {} created", task.id()));
+    // A slot per running task: the limit is per harness and model, and the slot's record is
+    // what tells the next runner that this task is writing the project too (R9).
+    let limit = config.limit(profile);
+    let Some(slot) = take_slot(&project, profile, &task, limit, &mut handover, stderr)? else {
+        return Ok(exit::TASK_NOT_DONE);
+    };
+    for other in slot.overlaps() {
+        log(
+            stderr,
+            &format!(
+                "dog-walker: warning: task {} overlaps task {other}'s write scope (the project)",
+                task.id()
+            ),
+        );
+    }
     handover.start()?;
     save(&handover, &task)?;
     log(
@@ -306,6 +324,48 @@ fn run_task(
     } else {
         exit::TASK_NOT_DONE
     })
+}
+
+/// Takes the run's slot; `None` when the wait was cut short, and then the task is ended as
+/// cancelled before its harness ever started.
+fn take_slot(
+    project: &Path,
+    profile: &Profile,
+    task: &Task,
+    limit: Option<usize>,
+    handover: &mut Handover,
+    stderr: &mut dyn Write,
+) -> Result<Option<slots::Slot>, Error> {
+    let cancel = task.directory().join(launch::CANCEL_FILE);
+    let mut waiting = || {
+        log(
+            stderr,
+            &format!(
+                "dog-walker: task {} waiting for a slot (at most {} at once)",
+                task.id(),
+                limit.unwrap_or_default()
+            ),
+        );
+    };
+    let slot = slots::acquire(
+        project,
+        profile,
+        limit,
+        &task.id().to_string(),
+        &|| launch::interrupted() || cancel.exists(),
+        &mut waiting,
+    )?;
+    if slot.is_none() {
+        handover.cancel_before_start("The task was cancelled while it waited for a slot.")?;
+        save(handover, task)?;
+        // The end state is on disk, so the marker has done its work.
+        let _ = std::fs::remove_file(&cancel);
+        log(
+            stderr,
+            &format!("dog-walker: task {} cancelled in the queue", task.id()),
+        );
+    }
+    Ok(slot)
 }
 
 /// Whether this process runs inside a task: the marker names a directory, or an ancestor is a

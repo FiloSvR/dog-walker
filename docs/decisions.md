@@ -98,3 +98,15 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     sentinel the runner binds read-only), which also needs a channel the harness can drop.
     R8 is read as "a secondary is not a delegator by default", and this guard is what a
     well-behaved harness and a wrapper meet. Discussion: issue #9.
+
+12. **A concurrency limit is advisory, and a slot is a record of the runner's own process**
+    (D12, 2026-11-03). `.dog-walker/run/<id>.slot` holds the runner's pid and its start time,
+    so a reused pid is not a live runner; another runner counts the records whose runner is
+    alive and waits while the count for its harness and model is at the limit. The record is
+    written through a temporary file and the directory is mounted read-only inside the sandbox:
+    a harness cannot plant, remove or block a record. Two runners can read the same free slot
+    and both start, so a limit of one can briefly be two. Rejected: a lock or semaphore that
+    would make the limit exact, because it serialises starts and needs a slot count the
+    per-harness limits do not have, and because the requirement is a limit that queues best
+    effort, not a scheduler. A stale record (the runner died) is cleaned by the next runner
+    that sees it. Discussion: issue #7.

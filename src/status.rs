@@ -65,6 +65,18 @@ impl Status {
         }
     }
 
+    /// `created` to `cancelled`: a task stopped while it was still waiting for a slot, so
+    /// its harness never ran (R9, R12).
+    pub fn cancel_before_start(self) -> Result<Status, StatusError> {
+        match self {
+            Status::Created => Ok(Status::Cancelled),
+            from => Err(StatusError::Transition {
+                from,
+                to: Status::Cancelled,
+            }),
+        }
+    }
+
     /// `running` to one of the end states, once the task has ended.
     pub fn end(self, to: Status) -> Result<Status, StatusError> {
         if !to.is_end() {
@@ -94,6 +106,17 @@ mod tests {
             assert!(from.start().is_err(), "{from}");
         }
         assert!(Status::Running.start().is_err());
+    }
+
+    #[test]
+    fn a_created_task_can_be_cancelled_before_it_starts() {
+        assert_eq!(
+            Status::Created.cancel_before_start().unwrap(),
+            Status::Cancelled
+        );
+        for from in Status::ENDS.into_iter().chain([Status::Running]) {
+            assert!(from.cancel_before_start().is_err(), "{from}");
+        }
     }
 
     #[test]
