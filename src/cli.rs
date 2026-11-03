@@ -92,7 +92,11 @@ enum Command {
         /// A secondary for reviews, as `harness[:model]`, or `no`
         #[arg(long, value_name = "HARNESS[:MODEL]|no")]
         reviewer: Option<String>,
-        /// Write without asking to confirm
+        /// Where the instructions line goes: this `project`'s file or the `global` one; asked when
+        /// not given
+        #[arg(long, value_name = "project|global")]
+        scope: Option<String>,
+        /// Write without asking to confirm (the line then goes in the project's file)
         #[arg(long)]
         yes: bool,
     },
@@ -156,12 +160,12 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             main,
             worker,
             reviewer,
+            scope,
             yes,
         } => init(
             cli,
-            main.as_deref(),
-            worker.as_deref(),
-            reviewer.as_deref(),
+            [main.as_deref(), worker.as_deref(), reviewer.as_deref()],
+            scope.as_deref(),
             *yes,
             stdout,
             stderr,
@@ -257,9 +261,8 @@ fn load(cli: &Cli) -> Result<Config, ConfigError> {
 /// main harness's instructions line.
 fn init(
     cli: &Cli,
-    main: Option<&str>,
-    worker: Option<&str>,
-    reviewer: Option<&str>,
+    [main, worker, reviewer]: [Option<&str>; 3],
+    scope: Option<&str>,
     yes: bool,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
@@ -273,11 +276,16 @@ fn init(
         home,
         config_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
         path: std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect(),
+        project: std::env::current_dir().map_err(|source| crate::error::SetupError::Io {
+            path: PathBuf::from("."),
+            source,
+        })?,
     };
     let options = setup::Options {
         main: main.map(str::to_owned),
         worker: worker.map(str::to_owned),
         reviewer: reviewer.map(str::to_owned),
+        scope: scope.map(str::to_owned),
         yes,
     };
     setup::run_init(

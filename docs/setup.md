@@ -18,10 +18,12 @@ each failure.
 It asks which harness you open yourself (the main profile, required), then, for a `worker` and
 a `reviewer`, which harness and model to use or `no` to skip. It finds each harness's install
 directory, writes the profile, creates a private directory and an env file for it, and adds a
-line to your main harness's global instructions file (`~/.claude/CLAUDE.md` for Claude Code,
-`~/.codex/AGENTS.md` for Codex) so that it reads `dog-walker instructions` before it delegates.
-It shows everything it will write and asks before it writes. Pi and dsh have no verified global
-file, so for those it prints the line for you to add.
+line to your main harness's instructions file so that it reads `dog-walker instructions` before
+it delegates. It asks where: this project's file (`CLAUDE.md` for Claude Code, `AGENTS.md` for
+Codex, in the directory you run it from; the default) or your global one (`~/.claude/CLAUDE.md`,
+`~/.codex/AGENTS.md`), which tells every project. `--scope project|global` answers it, and
+`--yes` takes the project. It shows everything it will write and asks before it writes. Pi and
+dsh have no verified file, so for those it prints the line for you to add.
 
 It never asks for, reads or writes a secret. What it leaves to you is printed at the end: put
 your key in the env file (or run `claude setup-token`, or copy the Codex login), load the env

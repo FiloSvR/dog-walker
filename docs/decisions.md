@@ -186,15 +186,15 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     `reviewer` optional) for a harness and model, finds the install directory from where the
     program resolves, writes the profile's sandbox part (`docs/setup.md` as code), creates a
     private directory (700) and an env file (600) with the non-secret lines, and appends a marked
-    block to the main harness's global instructions file. It shows the plan and asks first
+    block to the main harness's instructions file, the project's by default and the global one when the user says so (`--scope`, or asked). It shows the plan and asks first
     (`--yes` skips), appends to an existing config and never edits it, and creates a file that
     exists never. It asks for the name of the credential variable and never reads, copies or
     writes a value: the token and the Codex login are printed as steps. Only Claude Code
-    (`~/.claude/CLAUDE.md`) and Codex (`~/.codex/AGENTS.md`) have a verified global file; for Pi
-    and dsh the line is printed. Rejected: a silent step on install or on the first `run` (it
+    (`CLAUDE.md`, `~/.claude/CLAUDE.md`) and Codex (`AGENTS.md`, `~/.codex/AGENTS.md`) have a
+    verified file; for Pi and dsh the line is printed. Rejected: a silent step on install or on the first `run` (it
     would write outside the project unasked, against R19's spirit); copying the Codex login
     (a credential copy the user should choose); re-serialising the config (it would drop the
-    user's comments); a project `AGENTS.md` (the profiles are user-level, so is the line).
+    user's comments); a global file as the only choice (it changes every project of the user without asking, so the scope is asked and defaults to the project; the profiles stay user-level because they hold the user's harness and model choices).
     Hardening from the review of the first version (task 0099): the config is written last, so a
     run that fails midway records no profile that a second run would skip; a preflight refuses,
     before anything is written, a config path with a control character (it would end a comment in
