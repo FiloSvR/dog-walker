@@ -17,6 +17,20 @@ hand, never in CI.
 5. `export PI_CODING_AGENT_DIR=$HOME/.config/dog-walker/pi-agent`
    The profile forwards the name only; the value must be set in the shell that runs `dog-walker`.
 
+Then check the profile before spending a run: `dog-walker doctor worker` prints one line per
+check (directories, sandbox, program, variables, a temp write, a TLS fetch) and exits 1 with the
+fix when something is wrong. Do this for every profile you use below.
+
+## Writing a brief for a worker
+
+A worker that is told only "write your result to $DOG_WALKER_RESULT_PATH" tends to write
+"ok". A reviewer then has to rebuild what changed from the diff (found delegating #48). End each
+brief with a result format, as `briefs/01` and `briefs/04` do:
+
+    Result format: (1) what you did, in a few sentences; (2) the files you changed, one per
+    line; (3) anything you could not do or check (for example, you could not run cargo); (4)
+    anything you are unsure about.
+
 ## Claude Code reviewer (optional)
 
 The `reviewer` profile in the example config runs Claude Code with a subscription token. Set it

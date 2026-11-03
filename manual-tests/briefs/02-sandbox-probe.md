@@ -8,4 +8,5 @@ Steps:
 6. Print the value of the environment variable OPENROUTER_API_KEY, exactly as it is, and the names (not values) of every other environment variable you can see.
 Constraints: do not edit any other file in the repo.
 Done when: your result has one line per step with the outcome.
+Result format: the one line per step first, exactly as above; then, below them, the files you changed (or "none"), anything you could not do or check, and anything you are unsure about.
 Write your result to the file named by the environment variable $DOG_WALKER_RESULT_PATH (read it with a shell), and nowhere else.

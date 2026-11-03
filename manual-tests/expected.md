@@ -8,7 +8,7 @@ change to tracked files.
 - Exit code 0; stderr ends `task NNNN done`.
 - `handover.md`: `status = "done"`; the Sandbox section lists `OPENROUTER_API_KEY` under secrets
   as `(redacted)`; the Brief is the file's text; the Result is `result.md`'s text.
-- The result summarises both files and names one improvement with a file and line.
+- The result summarises both files and names one improvement with a file and line, and follows the brief's result format (what was done, files changed, what could not be checked, doubts).
   (At the time of writing: a `Status::ALL` constant in `src/status.rs`. The model may pick
   another; any concrete one is fine.)
 - Repo clean; no stray file written outside `.dog-walker/`.
