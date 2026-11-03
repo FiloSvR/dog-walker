@@ -164,3 +164,17 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     stopping at the first failure (the user fixes one thing per run). dog-walker still opens no
     connection of its own (R19): the probe program does. It creates no home and copies no
     credential.
+
+18. **Usage is read from the harness's log, through the adapter**
+    (D18, 2026-11-03, #58). The point of a good brief is that the worker spends fewer tokens, so
+    a task has to show what it spent. Each harness says it differently: Codex ends its output
+    with `tokens used`; Claude Code with `--output-format json` prints one result object with
+    usage, turns and cost; Pi with `--mode json` prints a `turn_end` event per model call; dsh
+    prints nothing readable. `Adapter::usage` parses the redacted `harness.log` after the run and
+    the handover's front matter gets `tokens`, `turns` and `cost_usd` where known. The two JSON
+    flags make those two logs machine output instead of the final message, which is what
+    `result.md` is for. A profile with its own `command` has no usage (nothing says what its
+    output means). Rejected: counting tokens ourselves (a tokenizer per model, and wrong);
+    reading each harness's session files (private formats, and not in the sandbox); recording
+    zero for an unreported run (it would read as a cheap task). The numbers are the harness's
+    own claim: the log is untrusted output, so they are for judging a brief, not for billing.

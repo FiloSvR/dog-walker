@@ -17,6 +17,7 @@ use crate::config::ProfileName;
 use crate::error::HandoverError;
 use crate::status::Status;
 use crate::task::TaskId;
+use crate::usage::Usage;
 
 pub struct Handover {
     id: TaskId,
@@ -27,6 +28,8 @@ pub struct Handover {
     outcome: Option<String>,
     /// The sandbox policy the run had, as a `## Sandbox` section when it is set.
     sandbox: Option<String>,
+    /// What the run cost, when the harness reported it.
+    usage: Option<Usage>,
 }
 
 impl Handover {
@@ -39,6 +42,7 @@ impl Handover {
             brief: brief.to_owned(),
             outcome: None,
             sandbox: None,
+            usage: None,
         }
     }
 
@@ -47,6 +51,11 @@ impl Handover {
     pub fn with_sandbox(mut self, policy: &str) -> Handover {
         self.sandbox = Some(policy.to_owned());
         self
+    }
+
+    /// Records what the run cost, as the harness reported it (D18).
+    pub fn record_usage(&mut self, usage: Option<Usage>) {
+        self.usage = usage;
     }
 
     pub fn status(&self) -> Status {
@@ -111,9 +120,13 @@ impl Handover {
 
     /// The document as it is written to disk.
     pub fn render(&self) -> String {
+        let usage = self.usage.map(|usage| usage.front_matter());
         let front = format!(
-            "+++\nid = \"{}\"\nprofile = \"{}\"\nstatus = \"{}\"\n+++\n",
-            self.id, self.profile, self.status
+            "+++\nid = \"{}\"\nprofile = \"{}\"\nstatus = \"{}\"\n{}+++\n",
+            self.id,
+            self.profile,
+            self.status,
+            usage.unwrap_or_default()
         );
         let result = match &self.outcome {
             Some(outcome) => format!("\n## Result\n\n{}\n", outcome.trim_end()),
@@ -143,6 +156,10 @@ pub struct FrontMatter {
     pub id: String,
     pub profile: String,
     pub status: String,
+    /// Tokens the harness reported for the run; absent when it reported none.
+    pub tokens: Option<u64>,
+    pub turns: Option<u64>,
+    pub cost_usd: Option<f64>,
 }
 
 /// Reads the front matter of `text`; `None` when there is none or it is not TOML.
@@ -205,6 +222,23 @@ mod tests {
         assert_eq!(parsed.id, "0007");
         assert_eq!(parsed.profile, "alpha");
         assert_eq!(parsed.status, "running");
+    }
+
+    #[test]
+    fn the_front_matter_has_the_usage_only_when_it_is_known() {
+        let mut handover = handover();
+        let bare = front_matter(&handover.render()).unwrap();
+        assert_eq!(bare.tokens, None);
+        handover.record_usage(Some(Usage {
+            total: 40317,
+            turns: Some(3),
+            cost_usd: Some(0.5),
+        }));
+        let parsed = front_matter(&handover.render()).unwrap();
+        assert_eq!(parsed.tokens, Some(40317));
+        assert_eq!(parsed.turns, Some(3));
+        assert_eq!(parsed.cost_usd, Some(0.5));
+        assert_eq!(parsed.status, "created");
     }
 
     #[test]

@@ -62,6 +62,7 @@ From the repo root (a git repository; `.dog-walker/` is ignored):
 | `02-sandbox-probe` | the sandbox from inside: project writes work, outside writes, `git commit` and a secret do not leak |
 | `03-no-result-path` | a brief that never names the result file still ends `done`: the launcher adds it |
 | `04-review-worker-diff` | the full loop: a `reviewer` reviews a `worker`'s uncommitted change from its handover |
+| `05a-thin` and `05b-rich` | the same question with a bare brief and with one that hands over what the main harness knows: the handover's `tokens`, `turns` and `cost_usd` show what the second saves |
 
 If a test fails before the model answers, the cause is usually setup: `harness.log` says
 which (a missing install directory, `Connection error.` for a missing CA store or key).
@@ -76,3 +77,21 @@ which (a missing install directory, `Connection error.` for a missing CA store o
        dog-walker run reviewer --file /tmp/review.md
 
 3. Read the verdict, then decide yourself: the reviewer only reports, and nothing is committed.
+
+## Does a richer brief save tokens (tests 05a and 05b)
+
+The brief is the only way the main harness can hand over what it has already learned, so a
+brief that leaves it out makes the worker pay again (R23). These two briefs ask one question,
+and `05b-rich` also says where to look, what is settled, what to skip and how to verify. Run
+each three times on the same profile (a model's cost varies from run to run), then read what
+each task used:
+
+    for b in 05a-thin 05b-rich; do
+      for i in 1 2 3; do target/debug/dog-walker run worker --file manual-tests/briefs/$b.md; done
+    done
+    grep -H '^\(tokens\|turns\|cost_usd\) ' .dog-walker/tasks/*/handover.md | tail -18
+
+Compare the medians of the two briefs, not single runs. See `expected.md` for the reading. A
+harness that reports no usage (dsh, or a profile with its own `command`) shows nothing here;
+use Pi, Codex or Claude Code. For Claude Code compare `cost_usd`: its `tokens` count the
+cached input it re-reads on every turn.

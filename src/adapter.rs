@@ -9,6 +9,7 @@ use std::ffi::OsString;
 
 use crate::config::{Harness, Profile};
 use crate::error::AdapterError;
+use crate::usage::{self, Usage};
 
 /// What an adapter provides: the argv that runs its harness, and the variables it needs.
 pub trait Adapter {
@@ -26,10 +27,18 @@ pub trait Adapter {
     fn fixed_env(&self) -> &'static [(&'static str, &'static str)] {
         &[]
     }
+
+    /// What the run cost, read from the harness's log; `None` when the harness reports
+    /// nothing dog-walker can read (D18).
+    fn usage(&self, _log: &str) -> Option<Usage> {
+        None
+    }
 }
 
-/// Claude Code, run unattended: `claude -p --dangerously-skip-permissions [--model <model>]
-/// [--effort <effort>] -- <brief>`.
+/// Claude Code, run unattended: `claude -p --dangerously-skip-permissions --output-format json
+/// [--model <model>] [--effort <effort>] -- <brief>`.
+///
+/// `--output-format json` makes the log one result object, with the run's usage in it (D18).
 ///
 /// `-p` alone starts in Manual mode, which denies the edits and commands a task needs; the
 /// sandbox is the boundary here (D2), so the harness is told to skip its own permission checks.
@@ -41,6 +50,8 @@ impl Adapter for ClaudeCode {
             "claude".into(),
             "-p".into(),
             "--dangerously-skip-permissions".into(),
+            "--output-format".into(),
+            "json".into(),
         ];
         if !profile.model.is_empty() {
             argv.push("--model".into());
@@ -61,9 +72,16 @@ impl Adapter for ClaudeCode {
         // its credential.
         &[]
     }
+
+    fn usage(&self, log: &str) -> Option<Usage> {
+        usage::claude(log)
+    }
 }
 
-/// Pi, run unattended: `pi -p --no-session --model <model> [--thinking <effort>] -- <brief>`.
+/// Pi, run unattended: `pi -p --no-session --mode json --model <model> [--thinking <effort>] --
+/// <brief>`.
+///
+/// `--mode json` makes the log a stream of events, one per model call with its usage (D18).
 ///
 /// `--no-session` is what makes it work in the sandbox: the agent directory is read-only
 /// there, and Pi would otherwise create a session inside it.
@@ -71,7 +89,13 @@ pub struct Pi;
 
 impl Adapter for Pi {
     fn argv(&self, profile: &Profile) -> Vec<OsString> {
-        let mut argv: Vec<OsString> = vec!["pi".into(), "-p".into(), "--no-session".into()];
+        let mut argv: Vec<OsString> = vec![
+            "pi".into(),
+            "-p".into(),
+            "--no-session".into(),
+            "--mode".into(),
+            "json".into(),
+        ];
         if !profile.model.is_empty() {
             argv.push("--model".into());
             argv.push(profile.model.clone().into());
@@ -89,6 +113,10 @@ impl Adapter for Pi {
         // Pi finds its agent directory through the home directory; the directory itself (and
         // the provider's key) is the profile's to list.
         &["HOME"]
+    }
+
+    fn usage(&self, log: &str) -> Option<Usage> {
+        usage::pi(log)
     }
 }
 
@@ -129,6 +157,10 @@ impl Adapter for Codex {
         // Codex finds `$CODEX_HOME` (or `$HOME/.codex`) through the home directory; the
         // directory itself is the profile's to list, and writable.
         &["HOME"]
+    }
+
+    fn usage(&self, log: &str) -> Option<Usage> {
+        usage::codex(log)
     }
 }
 
@@ -210,6 +242,16 @@ pub fn with_brief(argv: &[OsString], brief: &str) -> Vec<OsString> {
     argv
 }
 
+/// What a task cost, from the harness's log. A profile with its own `command` is not running
+/// the adapter, so nothing says what its output means and it has no usage; neither has a
+/// harness whose log carries none (dsh).
+pub fn usage(profile: &Profile, log: &str) -> Option<Usage> {
+    if profile.command.as_ref().is_some_and(|c| !c.is_empty()) {
+        return None;
+    }
+    of(profile.harness).usage(log)
+}
+
 /// The variables dog-walker sets for the profile's harness: its adapter's fixed values. A profile
 /// with its own `command` is not running the adapter, and one that lists the name in `env`
 /// chose its own value (the host's), so neither gets the adapter's.
@@ -283,6 +325,8 @@ mod tests {
                 "claude",
                 "-p",
                 "--dangerously-skip-permissions",
+                "--output-format",
+                "json",
                 "--model",
                 "claude-sonnet-4-5",
                 "--"
@@ -330,6 +374,8 @@ mod tests {
                 "pi",
                 "-p",
                 "--no-session",
+                "--mode",
+                "json",
                 "--model",
                 "deepseek/deepseek-chat",
                 "--thinking",
