@@ -252,3 +252,25 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     saves no key. Rejected: a key option or environment variable (shell history, `ps`); keeping
     the key in the config (the config is read by more tools and may be shared); echoing the key
     for confirmation.
+
+23. **`run --worktree` gives a task a checkout of its own.** Two tasks that write the same
+    files in one checkout overwrite each other (the later write wins; appends both survive),
+    and dog-walker cannot prevent it: the overlap warning is only advisory and two runners that
+    start together miss it. A task started with `--worktree` runs in a new `git worktree`,
+    detached at HEAD, under `<project config dir>/worktrees/w<pid>-<nanos>` (beside the
+    project's config, outside the repository, so the repository's `git status` stays clean).
+    The task folder, the run records and the overlap check are the worktree's own, because
+    that is where the task lives; a worktree never overlaps another. It is made only after the
+    setup has been checked, and taken back out if the task cannot be created. It is left in
+    place: its changes are the result, and the main harness diffs, commits and merges them
+    (the task cannot commit, as before). The handover and the log name the worktree and the
+    commit, and say that the checkout's uncommitted changes are not in it. In the sandbox the
+    repository's `.git` (the directory a worktree's `.git` file points to) is bound read-only,
+    and only when the repository lists the worktree and points back at it (the rule of D20), so
+    `git status` and `git diff` work in the task and the repository cannot be changed from it.
+    `git` runs with its hooks off and the repository's environment variables cleared.
+    Rejected: removing the worktree when the task ends (the changes would go with it);
+    copying the directory (it would copy ignored files, secrets among them, and lose history);
+    locking files (a harness writes through its own tools, so dog-walker cannot see a write
+    until it is done). Not done: a command to list or remove worktrees (`git worktree list`
+    and `remove` do it), and the checkout's uncommitted changes in the worktree.

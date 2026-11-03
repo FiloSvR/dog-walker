@@ -19,3 +19,4 @@ pub mod slots;
 pub mod status;
 pub mod task;
 pub mod usage;
+pub mod worktree;

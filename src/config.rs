@@ -540,6 +540,15 @@ pub fn project_root(dir: &Path) -> PathBuf {
 
 /// The main checkout that lists `worktree` (whose `.git` is the file `git_file`), if it does.
 fn main_checkout(worktree: &Path, git_file: &Path) -> Option<PathBuf> {
+    common_git_dir(worktree, git_file)?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+/// The repository's own `.git` directory that `worktree` (a linked worktree, whose `.git` is the
+/// file `git_file`) belongs to, believed only on the terms of `project_root`. A sandbox binds it
+/// read-only so that `git` works inside a worktree.
+pub fn common_git_dir(worktree: &Path, git_file: &Path) -> Option<PathBuf> {
     let text = fs::read_to_string(git_file).ok()?;
     let named = PathBuf::from(text.lines().next()?.strip_prefix("gitdir:")?.trim());
     let gitdir = fs::canonicalize(if named.is_absolute() {
@@ -556,7 +565,7 @@ fn main_checkout(worktree: &Path, git_file: &Path) -> Option<PathBuf> {
     if !listed || back != fs::canonicalize(git_file).ok()? || common.file_name()? != ".git" {
         return None;
     }
-    common.parent().map(Path::to_path_buf)
+    Some(common)
 }
 
 /// The user-owned config of one project: `projects/<name>-<hash>/config.toml` beside the global
