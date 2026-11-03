@@ -1430,6 +1430,99 @@ fn at17_a_timeout_inside_the_sandbox_cleans_up() {
     );
 }
 
+// AT10 (R9): with no limit, three tasks run at once, each in its own folder.
+#[test]
+fn at10_three_tasks_run_at_once() {
+    let fixture = Fixture::new("at10", "slow");
+    let children: Vec<_> = ["One.", "Two.", "Three."]
+        .iter()
+        .map(|brief| spawn_run(&fixture, &["run", "alpha", brief]))
+        .collect();
+    for child in children {
+        let out = wait_with_deadline(&fixture, child, Duration::from_secs(20));
+        assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    }
+    let folders = fs::read_dir(fixture.tasks()).unwrap().flatten().count();
+    assert_eq!(folders, 3);
+}
+
+// AT11 (R9): a limit of one for a harness and model queues the second task, and a different
+// model is not affected.
+#[test]
+fn at11_a_limit_queues_the_second_task() {
+    let fixture = Fixture::with_timeout("at11", "slow", None);
+    add_config(&fixture, "[limits]\n\"pi/local/qwen\" = 1\n");
+    let first = spawn_run(&fixture, &["run", "alpha", "One."]);
+    wait_for_slot(&fixture, "0001");
+    let second = spawn_run(&fixture, &["run", "alpha", "Two."]);
+    let first = wait_with_deadline(&fixture, first, Duration::from_secs(20));
+    assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
+    let second = wait_with_deadline(&fixture, second, Duration::from_secs(20));
+    assert_eq!(second.status.code(), Some(0), "stderr: {}", stderr(&second));
+    assert!(
+        stderr(&second).contains("waiting for a slot"),
+        "{}",
+        stderr(&second)
+    );
+
+    // Another model has no limit of its own: it does not wait for the first.
+    let other = Fixture::with_timeout("at11-other", "slow", None);
+    add_config(&other, "[limits]\n\"pi/local/qwen\" = 1\n");
+    add_config(
+        &other,
+        &format!(
+            "[profiles.beta]\nharness = \"pi\"\nmodel = \"other\"\ncommand = [\"{}\", \"slow\"]\n",
+            other.dir.path().join("fake.sh").display()
+        ),
+    );
+    let beta = spawn_run(&other, &["run", "beta", "Two."]);
+    let out = wait_with_deadline(&other, beta, Duration::from_secs(20));
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        !stderr(&out).contains("waiting for a slot"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+// AT12 (R9): two running tasks overlap on the project, and the warning names both ids.
+#[test]
+fn at12_an_overlap_is_warned_about_by_id() {
+    let fixture = Fixture::new("at12", "slow");
+    let first = spawn_run(&fixture, &["run", "alpha", "One."]);
+    wait_for_slot(&fixture, "0001");
+    let second = spawn_run(&fixture, &["run", "alpha", "Two."]);
+    let first = wait_with_deadline(&fixture, first, Duration::from_secs(20));
+    assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
+    let second = wait_with_deadline(&fixture, second, Duration::from_secs(20));
+    assert_eq!(second.status.code(), Some(0), "stderr: {}", stderr(&second));
+    assert!(
+        stderr(&second).contains("warning: task 0002 overlaps task 0001"),
+        "{}",
+        stderr(&second)
+    );
+}
+
+/// Waits until a task has written its slot record: that is what a second task reads.
+fn wait_for_slot(fixture: &Fixture, id: &str) {
+    let record = fixture
+        .project
+        .join(".dog-walker")
+        .join("run")
+        .join(format!("{id}.slot"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !record.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(record.exists(), "task {id} did not record its slot");
+}
+
+/// Appends a table or a profile to the fixture's config.
+fn add_config(fixture: &Fixture, text: &str) {
+    let read = fs::read_to_string(&fixture.config).unwrap();
+    fs::write(&fixture.config, format!("{read}{text}")).unwrap();
+}
+
 /// Whether no process on the host is running `path`: inside a PID namespace the harness sees
 /// its own pids, so the host is where the leftovers would be.
 fn no_process_runs(path: &Path) -> bool {

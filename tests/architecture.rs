@@ -90,8 +90,9 @@ fn only_the_output_module_writes() -> io::Result<()> {
             &fs::read_to_string(&path)?,
             is_top_level(&src, &path, "main.rs"),
         );
-        // The handover writes its own document: a file write, not the process's streams.
-        if is_top_level(&src, &path, "handover.rs") {
+        // The handover writes its own document, and the slots write the run records: file
+        // writes, not the process's streams.
+        if is_top_level(&src, &path, "handover.rs") || is_top_level(&src, &path, "slots.rs") {
             found.retain(|pattern| !FILE_WRITES.contains(pattern));
         }
         assert!(

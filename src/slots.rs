@@ -221,8 +221,8 @@ mod tests {
         let dir = project.join(RUN_DIR);
         fs::create_dir_all(&dir).unwrap();
         // A pid that cannot be running: pid 0 is the kernel's.
-        fs::write(
-            dir.join("9999.slot"),
+        write_record(
+            &dir.join("9999.slot"),
             "id=9999\npid=0\nharness=pi\nmodel=local/qwen\n",
         )
         .unwrap();
