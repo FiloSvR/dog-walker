@@ -283,6 +283,7 @@ mod tests {
             read_only_dirs: Vec::new(),
             writable_dirs: Vec::new(),
             env: Vec::new(),
+            secrets: Vec::new(),
         }
     }
 

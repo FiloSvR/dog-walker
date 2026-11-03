@@ -6,7 +6,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// The file-writing spellings of `WRITES`, which `handover` may use for its own document
-/// (`handover.rs`). Everything that reaches stdout or stderr stays in the `output` module.
+/// (`handover.rs`) and `launch` for rewriting the harness log once a secret is redacted from
+/// it (`launch.rs`). Everything that reaches stdout or stderr stays in the `output` module.
 const FILE_WRITES: [&str; 1] = [".write_all("];
 
 /// Spellings of a write that only the `output` module may use, except for the file writes
@@ -90,9 +91,13 @@ fn only_the_output_module_writes() -> io::Result<()> {
             &fs::read_to_string(&path)?,
             is_top_level(&src, &path, "main.rs"),
         );
-        // The handover writes its own document, and the slots write the run records: file
-        // writes, not the process's streams.
-        if is_top_level(&src, &path, "handover.rs") || is_top_level(&src, &path, "slots.rs") {
+        // The handover writes its own document, the launcher rewrites the harness log to
+        // redact a secret, and the slots write the run records: file writes, not the
+        // process's streams.
+        if is_top_level(&src, &path, "handover.rs")
+            || is_top_level(&src, &path, "launch.rs")
+            || is_top_level(&src, &path, "slots.rs")
+        {
             found.retain(|pattern| !FILE_WRITES.contains(pattern));
         }
         assert!(

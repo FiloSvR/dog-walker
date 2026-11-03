@@ -16,7 +16,7 @@ use crate::error::{CliError, ConfigError, Error};
 use crate::handover::{self, Handover};
 use crate::launch::{self, End};
 use crate::output::{self, exit};
-use crate::sandbox::{Plan, Policy, Request};
+use crate::sandbox::{self, Plan, Policy, Request};
 use crate::slots;
 use crate::status::Status;
 use crate::task::{Task, TaskId};
@@ -203,6 +203,16 @@ fn run_task(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<u8, Error> {
+    // A task is not a delegator (R8): a `run` from inside one stops here, before a brief is
+    // read or a task exists, and the task that spawned it goes on. Two signals: the marker the
+    // harness gets, and a dog-walker ancestor, which a harness cannot clear from its own
+    // environment. A marker that points nowhere is a stray export, not a task.
+    if inside_a_task() {
+        return Err(CliError::Nested {
+            variable: launch::TASK_DIR,
+        }
+        .into());
+    }
     let config = load(cli)?;
     let profile = config
         .profiles()
@@ -252,10 +262,16 @@ fn run_task(
     plan.check(profile, &project)?;
     // The run directory is the runner's: a symlink there is a config error, not a task.
     slots::check(&project)?;
-    let task = Task::create(&project, &brief)?;
+    // What the record keeps is redacted, down to the folder's name: the harness reads the
+    // brief as written, and the task folder is dog-walker's (R18).
+    let secrets = plan.policy().secret_values();
+    let recorded = sandbox::redact(&brief, &secrets);
+    let task = Task::create(&project, &recorded)?;
     let handover_path = task.handover_path();
-    let mut handover = Handover::new(&task.id(), &profile.name, &brief)
-        .with_sandbox(&plan.policy().render(plan.sandboxed()));
+    // The policy section lists directories, which could contain a secret value; it is
+    // redacted like the rest of what dog-walker keeps (R18).
+    let sandbox = sandbox::redact(&plan.policy().render(plan.sandboxed()), &secrets);
+    let mut handover = Handover::new(&task.id(), &profile.name, &recorded).with_sandbox(&sandbox);
     save(&handover, &task)?;
     // The handover exists, so its path goes out now: whatever happens to the task from here,
     // stdout holds it (R6). The log lines are best effort: a closed stderr is no reason to
@@ -297,7 +313,7 @@ fn run_task(
         Ok(End::Cancelled) => (Status::Cancelled, "The task was cancelled.".to_owned()),
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
-    handover.end(status, &outcome)?;
+    handover.end(status, &sandbox::redact(&outcome, &secrets))?;
     save(&handover, &task)?;
     // Only now that the end state is on disk: a cancel that arrives later reads it and backs
     // off, and one that arrived earlier finds nothing to do.
@@ -348,6 +364,37 @@ fn take_slot(
         );
     }
     Ok(slot)
+}
+
+/// Whether this process runs inside a task: the marker names a directory, or an ancestor is a
+/// dog-walker.
+fn inside_a_task() -> bool {
+    let marker = std::env::var_os(launch::TASK_DIR).is_some_and(|dir| Path::new(&dir).is_dir());
+    if marker {
+        return true;
+    }
+    let mut pid = std::process::id();
+    for _ in 0..16 {
+        let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+            return false;
+        };
+        let Some(parent) = status
+            .lines()
+            .find_map(|line| line.strip_prefix("PPid:"))
+            .and_then(|value| value.trim().parse::<u32>().ok())
+        else {
+            return false;
+        };
+        if parent == 0 {
+            return false;
+        }
+        let comm = std::fs::read_to_string(format!("/proc/{parent}/comm")).unwrap_or_default();
+        if comm.trim() == "dog-walker" {
+            return true;
+        }
+        pid = parent;
+    }
+    false
 }
 
 /// Saves the handover, once the task folder is still the one that was created.

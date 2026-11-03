@@ -116,6 +116,30 @@ case $mode in
       printf 'push: %s\n' "$(status git push "$DOG_WALKER_TASK_DIR/../../../../outside.git" HEAD:refs/heads/main)"
     } > "$result"
     ;;
+  secret)
+    {
+      seen=no
+      if [ "$PROFILE_SECRET" = "topsecret-123" ]; then seen=exact; fi
+      printf 'seen: %s\n' "$seen"
+      printf 'value: %s\n' "${PROFILE_SECRET:-<unset>}"
+      printf 'plain: %s\n' "${TEST_VALUE:-<unset>}"
+    } > "$result"
+    printf 'a log line with %s\n' "${PROFILE_SECRET:-<unset>}" >&2
+    ;;
+  secret-binary)
+    printf 'value: %s\n' "${PROFILE_SECRET:-<unset>}" > "$result"
+    printf 'a log line with %s\n' "${PROFILE_SECRET:-<unset>}" >&2
+    printf 'a raw byte: \377\n' >&2
+    ;;
+  delegate)
+    {
+      nested=$("$TEST_BIN" --config "$TEST_CONFIG" run alpha "A task of its own." 2>&1)
+      printf 'nested: %s\n%s\n' "$?" "$nested"
+      # The marker can be cleared by a harness; the ancestry cannot.
+      cleared=$(env -u DOG_WALKER_TASK_DIR "$TEST_BIN" --config "$TEST_CONFIG" run alpha "Cleared." 2>&1)
+      printf 'cleared: %s\n%s\n' "$?" "$cleared"
+    } > "$result"
+    ;;
   env-report)
     printf 'host: %s\n' "${HOST_SECRET:-<unset>}" > "$result"
     ;;
@@ -286,6 +310,11 @@ impl Fixture {
             .unwrap_or_else(|| panic!("no task folder for {id}"))
             .path();
         fs::read_to_string(folder.join("handover.md")).unwrap()
+    }
+
+    /// The harness's own result, as the harness left it.
+    fn result(&self) -> PathBuf {
+        self.tasks().join(self.only_task()).join("result.md")
     }
 
     fn log(&self) -> String {
@@ -1449,6 +1478,90 @@ fn at17_a_timeout_inside_the_sandbox_cleans_up() {
     );
 }
 
+// AT23 (R18): a configured secret value is absent from the handover and the log, and the
+// harness still gets it.
+#[test]
+fn at23_a_configured_secret_is_redacted() {
+    if !sandbox_available("at23_a_configured_secret_is_redacted") {
+        return;
+    }
+    let fixture = Fixture::with_policy(
+        "at23",
+        "secret",
+        "env = [\"PROFILE_SECRET\", \"TEST_VALUE\"]\nsecrets = [\"PROFILE_SECRET\"]",
+    );
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Use topsecret-123 here."])
+        .current_dir(&fixture.project)
+        .env("PROFILE_SECRET", "topsecret-123")
+        .env("TEST_VALUE", "hello")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    // The brief is redacted in the record and in the task folder's name.
+    assert!(handover.contains("Use [redacted] here."), "{handover}");
+    assert!(
+        !fixture.tasks().join("0001-use-topsecret-123-here").exists(),
+        "the slug carries the secret"
+    );
+    // The harness's own result file stays as the harness wrote it: R18 covers the handover
+    // and the log, and the result is the harness's output.
+    let result = fs::read_to_string(fixture.result()).unwrap();
+    assert!(result.contains("value: topsecret-123"), "{result}");
+    // The value the harness got is the exact one, not a placeholder.
+    assert!(handover.contains("seen: exact"), "{handover}");
+    assert!(handover.contains("plain: hello"), "{handover}");
+    assert!(handover.contains("value: [redacted]"), "{handover}");
+    assert!(!handover.contains("topsecret-123"), "{handover}");
+    assert!(
+        handover.contains("- secrets: PROFILE_SECRET (redacted)"),
+        "{handover}"
+    );
+    let log = fixture.log();
+    assert!(log.contains("[redacted]"), "{log}");
+    assert!(!log.contains("topsecret-123"), "{log}");
+}
+
+// AT23 (R18): a log that is not UTF-8 is redacted too, and the run still ends done.
+#[test]
+fn at23_a_non_utf8_log_is_redacted() {
+    if !sandbox_available("at23_a_non_utf8_log_is_redacted") {
+        return;
+    }
+    let fixture = Fixture::with_policy(
+        "at23-binary",
+        "secret-binary",
+        "env = [\"PROFILE_SECRET\"]\nsecrets = [\"PROFILE_SECRET\"]",
+    );
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing."])
+        .current_dir(&fixture.project)
+        .env("PROFILE_SECRET", "topsecret-123")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let log = fs::read(
+        fixture
+            .project
+            .join(".dog-walker")
+            .join("tasks")
+            .join("0001-do-the-thing")
+            .join("harness.log"),
+    )
+    .unwrap();
+    assert!(log.windows(10).any(|w| w == b"[redacted]"), "{log:?}");
+    assert!(
+        !log.windows(13).any(|w| w == b"topsecret-123"),
+        "the secret is in the log"
+    );
+    assert!(log.contains(&0xFF), "the raw byte is still there");
+}
+
 // AT10 (R9): with no limit, three tasks run at once, each in its own folder.
 #[test]
 fn at10_three_tasks_run_at_once() {
@@ -1996,6 +2109,40 @@ fn at4_a_task_request_may_only_tighten() {
         assert!(stderr(&out).contains("maybe"), "{flag}: {}", stderr(&out));
         assert!(!fixture.tasks().exists());
     }
+}
+
+// AT9 (R8): a task cannot start tasks: a harness that calls `run` is refused, with its
+// environment as it is and with the marker cleared, and its own task finishes untouched.
+#[test]
+fn at9_a_task_cannot_start_tasks() {
+    let fixture = Fixture::with_policy("at9", "delegate", "env = [\"TEST_BIN\", \"TEST_CONFIG\"]");
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing.", "--unsandboxed"])
+        .current_dir(&fixture.project)
+        .env("TEST_BIN", env!("CARGO_BIN_EXE_dog-walker"))
+        .env("TEST_CONFIG", &fixture.config)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"done\""), "{handover}");
+    assert!(handover.contains("nested: 2"), "{handover}");
+    assert!(handover.contains("cleared: 2"), "{handover}");
+    assert!(handover.contains("a task cannot start tasks"), "{handover}");
+    // The nested calls made no task of their own, and took no id.
+    let folders = fs::read_dir(fixture.tasks())
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .count();
+    assert_eq!(folders, 1);
+    let markers = fs::read_dir(fixture.project.join(".dog-walker").join("ids"))
+        .unwrap()
+        .flatten()
+        .count();
+    assert_eq!(markers, 1);
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.

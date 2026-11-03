@@ -52,6 +52,8 @@ pub struct Policy {
     pub read_only_dirs: Vec<PathBuf>,
     pub writable_dirs: Vec<PathBuf>,
     pub env: Vec<String>,
+    /// Variables whose values are redacted from the handover and the log (R18).
+    pub secrets: Vec<String>,
 }
 
 impl Policy {
@@ -70,6 +72,7 @@ impl Policy {
             read_only_dirs,
             writable_dirs,
             env: profile.env.clone(),
+            secrets: profile.secrets.clone(),
         })
     }
 
@@ -81,13 +84,38 @@ impl Policy {
             read_only_dirs: profile.read_only_dirs.clone(),
             writable_dirs: profile.writable_dirs.clone(),
             env: profile.env.clone(),
+            secrets: profile.secrets.clone(),
         }
+    }
+
+    /// The values to redact: what the configured secret names hold in this environment.
+    pub fn secret_values(&self) -> Vec<String> {
+        self.secret_bytes()
+            .into_iter()
+            .map(|value| String::from_utf8_lossy(&value).into_owned())
+            .collect()
+    }
+
+    /// The same values as bytes, so a value that is not UTF-8 is still found in a log.
+    pub fn secret_bytes(&self) -> Vec<Vec<u8>> {
+        self.secrets
+            .iter()
+            .filter_map(env::var_os)
+            .map(|value| value.as_encoded_bytes().to_vec())
+            .filter(|value| !value.is_empty())
+            .collect()
     }
 
     /// What the handover says about the run, one bullet per line.
     pub fn render(&self, sandboxed: bool) -> String {
         if !sandboxed {
-            return "- tool: none (--unsandboxed)\n- network: not enforced\n- git: not enforced\n- directories: not enforced\n- environment: inherited, not cleaned".to_owned();
+            let mut text = "- tool: none (--unsandboxed)\n- network: not enforced\n- git: not enforced\n- directories: not enforced\n- environment: inherited, not cleaned".to_owned();
+            if !self.secrets.is_empty() {
+                text.push_str("\n- secrets: ");
+                text.push_str(&self.secrets.join(", "));
+                text.push_str(" (redacted)");
+            }
+            return text;
         }
         let list = |paths: &[PathBuf]| {
             if paths.is_empty() {
@@ -104,7 +132,7 @@ impl Policy {
         if !names.iter().any(|name| name == "PATH") {
             names.push("PATH".to_owned());
         }
-        format!(
+        let mut text = format!(
             "- tool: bwrap\n- network: {}\n- git: {}\n- writable dirs: {}\n- read-only dirs: {}\n- environment: {}",
             if self.network { "on" } else { "off" },
             if self.git_writable {
@@ -115,7 +143,13 @@ impl Policy {
             list(&self.writable_dirs),
             list(&self.read_only_dirs),
             names.join(", "),
-        )
+        );
+        if !self.secrets.is_empty() {
+            text.push_str("\n- secrets: ");
+            text.push_str(&self.secrets.join(", "));
+            text.push_str(" (redacted)");
+        }
+        text
     }
 }
 
@@ -193,6 +227,13 @@ impl Request {
             git_writable,
             read_only_dirs,
             writable_dirs,
+            // A secret the effective environment no longer carries is not one to record.
+            secrets: parent
+                .secrets
+                .iter()
+                .filter(|name| env.contains(name))
+                .cloned()
+                .collect(),
             env,
         })
     }
@@ -349,6 +390,42 @@ fn shown(dir: &Path, field: &'static str, origin: &str) -> Result<PathBuf, Overr
         field,
         detail,
     })
+}
+
+/// `bytes` with every configured secret value replaced, byte for byte: a log is not required
+/// to be UTF-8, and a secret that is not is still a secret.
+pub fn redact_bytes(bytes: &[u8], secrets: &[Vec<u8>]) -> Vec<u8> {
+    let mut ordered: Vec<&Vec<u8>> = secrets.iter().filter(|secret| !secret.is_empty()).collect();
+    ordered.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    let mut redacted = bytes.to_vec();
+    for secret in ordered {
+        let mut search = 0;
+        while let Some(rest) = redacted.get(search..) {
+            let Some(at) = rest
+                .windows(secret.len())
+                .position(|window| window == secret.as_slice())
+            else {
+                break;
+            };
+            let at = search + at;
+            redacted.splice(at..at + secret.len(), b"[redacted]".iter().copied());
+            search = at + "[redacted]".len();
+        }
+    }
+    redacted
+}
+
+/// `text` with every configured secret value replaced: the harness may print one, and the
+/// handover and the log outlive the run (R18).
+pub fn redact(text: &str, secrets: &[String]) -> String {
+    // Longest first: a value that contains another is removed whole, not in pieces.
+    let mut ordered: Vec<&String> = secrets.iter().filter(|secret| !secret.is_empty()).collect();
+    ordered.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    let mut redacted = text.to_owned();
+    for secret in ordered {
+        redacted = redacted.replace(secret.as_str(), "[redacted]");
+    }
+    redacted
 }
 
 /// What a run does about the sandbox.
@@ -708,6 +785,7 @@ mod tests {
             read_only_dirs: Vec::new(),
             writable_dirs: Vec::new(),
             env: Vec::new(),
+            secrets: Vec::new(),
         }
     }
 
@@ -732,6 +810,7 @@ mod tests {
             read_only_dirs: vec![PathBuf::from("/shared")],
             writable_dirs: vec![PathBuf::from("/cache")],
             env: vec!["HOME".to_owned()],
+            secrets: vec!["HOME".to_owned()],
         };
         // Absent fields inherit.
         let project = Path::new("/work/project");
@@ -820,6 +899,7 @@ mod tests {
             read_only_dirs: Vec::new(),
             writable_dirs: Vec::new(),
             env: Vec::new(),
+            secrets: Vec::new(),
         };
         let add = Request {
             read_only_dirs: Some(vec![protected.clone()]),

@@ -95,7 +95,7 @@ pub enum LaunchError {
     Sandbox(#[from] SandboxError),
     #[error("profile `{profile}` has no `command` to run")]
     NoCommand { profile: String },
-    #[error("cannot open the log {}: {source}", path.display())]
+    #[error("cannot use the log {}: {source}", path.display())]
     Log { path: PathBuf, source: io::Error },
     #[error("cannot start the harness `{}`: {source}", program.to_string_lossy())]
     Spawn {
@@ -160,6 +160,11 @@ pub enum CliError {
     TaskFile { path: PathBuf, source: io::Error },
     #[error("cannot read the task from stdin: {source}")]
     Stdin { source: io::Error },
+    #[error(
+        "a task cannot start tasks: this run is inside one (`{variable}` names a task, or a \
+         dog-walker is above it in the process tree); run it from your own shell"
+    )]
+    Nested { variable: &'static str },
     #[error("cannot find the project directory: {source}")]
     Project { source: io::Error },
     #[error("`{id}` is not a task id: it is the number in a task folder's name")]
