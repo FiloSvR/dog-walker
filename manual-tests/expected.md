@@ -86,11 +86,24 @@ A question whose answer is spread over three files: where a configured secret is
   misses a place is a failed run; do not count its usage.
 - Repo clean. Result item (5) tells which files the brief left out: the thin runs name
   `AGENTS.md` and `docs/agents/*` (the repo's instructions), the rich runs name none.
-- A first measurement (2026-11-03, three runs each, all correct). Pi, `glm-5.3-flash`: `06a-thin`
-  59864, 47487 and 70221 tokens in 9, 6 and 11 turns; `06b-rich` 38261, 38849 and 24785 in 6, 7
-  and 5. Medians 59864 against 38261 tokens (36% fewer) and 9 against 6 turns. Codex,
-  `gpt-6.1-terra` low: `06a-thin` 20396, 19370 and 27374; `06b-rich` 13068, 30592 and 9450.
-  Medians 20396 against 13068 (36% fewer), but one rich run cost more than every thin run, so
-  three runs show a tendency, not a result: run more before you rely on a number.
+- Ten runs of each brief on each harness (2026-11-03; every answer correct). Tokens, sorted:
+
+  | Harness | Brief | Median | Mean | Range |
+  |---|---|---|---|---|
+  | Pi, `glm-5.3-flash` | thin | 65043 (9.5 turns) | 61275 | 23133 to 86013 |
+  | Pi | rich | 35881 (6 turns) | 47871 | 22891 to 144373 |
+  | Codex, `gpt-6.1-terra` low | thin | 22022 | 22163 | 13221 to 34760 |
+  | Codex | rich | 12741 | 13906 | 7619 to 30592 |
+
+  At the median the rich brief used 45% fewer tokens on Pi and 42% fewer on Codex. The spread is
+  wide and the ranges overlap: the cheapest thin Pi run (23133; the next was 43846) cost less than nine of the ten rich runs,
+  and one rich Pi run cost more than any other (144373), so judge a brief by several runs. On
+  Codex the rich outlier (30592) made the fewest commands of its group; its extra cost was
+  reasoning, which a brief cannot remove.
+- Why the Pi outlier cost what it did: Pi's `tokens` add up each turn's whole context, so a big
+  read is paid again on every later turn. That run read `src/cli.rs` and `src/launch.rs` in full
+  (about 13000 tokens in one turn, then carried through six more) although the brief named only
+  functions. A rich brief that names a file does not stop the worker reading all of it: give the
+  lines (`src/cli.rs` 288 to 368) and say to read only those.
 - Reading both pairs together: a brief saves most when the answer needs exploring across files,
   and a little or nothing when one `cat` answers it.
