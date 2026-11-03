@@ -114,6 +114,32 @@ Checks: `at8_a_denied_operation_fails_the_task_and_is_traceable`,
 `at21_a_host_secret_is_invisible`, `at22_without_bwrap_*`, `at25_extra_dirs_and_variables_reach_the_harness`,
 `at26_git_*`, and the unit tests in `src/sandbox.rs`.
 
+## Project and task settings
+
+A profile is the policy (R3). A project's `.dog-walker/config.toml` takes the profile's five
+policy keys and can only tighten them; a task's `--network` and `--git` flags tighten the same
+two fields. Absent fields inherit, the network can go off but not on, `.git` can go from
+writable to read-only but not back, and the environment list can shrink. The directory lists
+follow what the mount would do: a read-only directory can be added inside the project or a
+writable directory (it takes write access away) but not elsewhere (it would be more to read),
+and one that protects the project or a writable directory cannot be dropped. Anything else is
+rejected, naming the field and who asked. The project file must be a regular file inside the
+project: a symlink is refused, not followed, and a FIFO is refused without a read. The effective policy is what the sandbox is built from
+(`Plan::from_policy`) and what the handover records; with `--unsandboxed` the record says the
+policy is not enforced, because it is not.
+
+Checks: `at4_a_project_config_can_tighten` (a host listener is unreachable in the tightened
+run), `at4_a_project_config_that_loosens_is_named`, `at4_a_project_config_cannot_add_a_directory`,
+`at4_a_project_config_cannot_drop_a_protecting_directory`,
+`at4_a_request_directory_must_exist`, `at4_a_directory_that_cannot_be_shown_is_refused`,
+`at4_a_symlinked_project_config_is_refused`, `at4_a_symlinked_project_config_directory_is_refused`,
+`at4_a_fifo_project_config_is_refused`, `at4_an_unknown_project_key_is_refused`,
+`at4_a_bad_git_mode_names_the_project_config`, `at4_a_malformed_project_config_is_named`,
+`at4_a_task_request_may_only_tighten` (both flags, both directions, and the values the flags
+refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit tests
+`a_request_may_tighten_and_is_named_when_it_loosens` and
+`a_read_only_directory_inside_the_project_can_be_added_but_not_dropped` in `src/sandbox.rs`.
+
 ## Stopping a task
 
 The harness leads a process group of its own, so a stop takes the processes in that group. `run`

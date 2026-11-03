@@ -65,3 +65,14 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    point. The cost is that a harness needing configuration in `$HOME` or scratch in `/tmp`
    must have those directories listed; adapters (#10) can declare them.
    Discussion: issue #4.
+
+9. **A project or a task may only tighten the policy, and a directory is judged by its mount**
+   (D9, 2026-11-03). The profile is the user's policy; a project's
+   `.dog-walker/config.toml` and a task's `--network`/`--git` flags are compared field by field
+   with it (and a task with the project-tightened policy) and refused when they would widen
+   it, naming the field and the origin. A directory is judged by what its mount does: adding a
+   read-only directory inside the project or a writable directory takes write access away and
+   is allowed, adding one elsewhere is more to read and is not, and dropping one that protects
+   the project or a writable directory gives write access back and is refused. Rejected:
+   merging the lists, which would let a repository grant itself access to the machine.
+   Discussion: issue #6.

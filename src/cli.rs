@@ -16,7 +16,7 @@ use crate::error::{CliError, ConfigError, Error};
 use crate::handover::{self, Handover};
 use crate::launch::{self, End};
 use crate::output::{self, exit};
-use crate::sandbox::Plan;
+use crate::sandbox::{Plan, Policy, Request};
 use crate::status::Status;
 use crate::task::{Task, TaskId};
 
@@ -59,6 +59,12 @@ enum Command {
         /// Run without the sandbox (bwrap): only when the user asks for it
         #[arg(long)]
         unsandboxed: bool,
+        /// Ask for a stricter network setting than the profile's
+        #[arg(long, value_name = "on|off", value_parser = ["on", "off"])]
+        network: Option<String>,
+        /// Ask for a stricter `.git` than the profile's
+        #[arg(long, value_name = "read-only|writable", value_parser = ["read-only", "writable"])]
+        git: Option<String>,
     },
     /// Ask a running task to stop
     Cancel {
@@ -127,16 +133,26 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             file,
             allow_main,
             unsandboxed,
-        } => run_task(
-            cli,
-            profile,
-            task.as_deref(),
-            file.as_deref(),
-            *allow_main,
-            *unsandboxed,
-            stdout,
-            stderr,
-        ),
+            network,
+            git,
+        } => {
+            let request = Request {
+                network: network.as_deref().map(|value| value == "on"),
+                git: git.clone(),
+                ..Request::default()
+            };
+            run_task(
+                cli,
+                profile,
+                task.as_deref(),
+                file.as_deref(),
+                *allow_main,
+                *unsandboxed,
+                &request,
+                stdout,
+                stderr,
+            )
+        }
         Command::Cancel { id } => cancel(id, stdout),
     }
 }
@@ -182,6 +198,7 @@ fn run_task(
     file: Option<&Path>,
     allow_main: bool,
     unsandboxed: bool,
+    request: &Request,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<u8, Error> {
@@ -212,7 +229,24 @@ fn run_task(
     let project =
         fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
             .map_err(|source| CliError::Project { source })?;
-    let plan = Plan::new(profile, &project, unsandboxed)?;
+    // The profile is the policy; the project config and the task may only tighten it (R3).
+    // Without the sandbox there is nothing to mount, so the directories are only shown.
+    let policy = if unsandboxed {
+        Policy::as_written(profile)
+    } else {
+        Policy::checked(profile)?
+    };
+    let policy = match config::project_config(&project)? {
+        Some(project_config) => {
+            let origin = format!("the project config {}", project_config.path().display());
+            project_config
+                .request()
+                .resolve(&policy, &project, &origin)?
+        }
+        None => policy,
+    };
+    let policy = request.resolve(&policy, &project, "the task request")?;
+    let plan = Plan::from_policy(policy, &project, unsandboxed)?;
     // A sandbox that cannot be set up is a config error, not a failed task.
     plan.check(profile, &project)?;
     let task = Task::create(&project, &brief)?;

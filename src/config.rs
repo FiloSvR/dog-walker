@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -347,6 +348,95 @@ fn check_text(field: &str, value: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// The project's own policy, `.dog-walker/config.toml`, which may only tighten the profile.
+pub fn project_config(project: &Path) -> Result<Option<ProjectConfig>, ConfigError> {
+    let dir = project.join(".dog-walker");
+    let path = dir.join("config.toml");
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(ConfigError::ReadProjectConfig { path, source }),
+    };
+    // A config that points out of the project could read anything the runner can (or be a
+    // FIFO that hangs the run): a regular file, opened through its own directory without
+    // following a link, without blocking, and read through the descriptor.
+    let unsafe_path = ConfigError::UnsafeProjectConfig { path: path.clone() };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(unsafe_path);
+    }
+    let flags =
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC;
+    let read_error = |source: rustix::io::Errno| ConfigError::ReadProjectConfig {
+        path: path.clone(),
+        source: io::Error::from(source),
+    };
+    let dir_fd = rustix::fs::open(
+        &dir,
+        flags | rustix::fs::OFlags::DIRECTORY,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(read_error)?;
+    let canonical_dir =
+        fs::canonicalize(&dir).map_err(|source| ConfigError::ReadProjectConfig {
+            path: path.clone(),
+            source,
+        })?;
+    if !canonical_dir.starts_with(project) {
+        return Err(unsafe_path);
+    }
+    let fd = rustix::fs::openat(
+        &dir_fd,
+        "config.toml",
+        flags | rustix::fs::OFlags::NONBLOCK,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(read_error)?;
+    let file = fs::File::from(fd);
+    let opened = file
+        .metadata()
+        .map_err(|source| ConfigError::ReadProjectConfig {
+            path: path.clone(),
+            source,
+        })?;
+    if !opened.is_file() {
+        return Err(unsafe_path);
+    }
+    let mut text = String::new();
+    file.take(MAX_PROJECT_CONFIG + 1)
+        .read_to_string(&mut text)
+        .map_err(|source| ConfigError::ReadProjectConfig {
+            path: path.clone(),
+            source,
+        })?;
+    if text.len() as u64 > MAX_PROJECT_CONFIG {
+        return Err(ConfigError::ProjectConfigTooLarge { path });
+    }
+    let request = toml::from_str(&text).map_err(|source| ConfigError::ProjectConfig {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(Some(ProjectConfig { path, request }))
+}
+
+/// A project's policy file is small; a file larger than this is not one.
+const MAX_PROJECT_CONFIG: u64 = 64 * 1024;
+
+/// A project's policy file: where it is, and what it asks for.
+pub struct ProjectConfig {
+    path: PathBuf,
+    request: crate::sandbox::Request,
+}
+
+impl ProjectConfig {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn request(&self) -> &crate::sandbox::Request {
+        &self.request
+    }
 }
 
 /// Where the config file is when `--config` is not given: `$XDG_CONFIG_HOME` if it is an

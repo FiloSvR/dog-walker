@@ -28,6 +28,12 @@ profile can cut the network (`network = false`) and make `.git` writable
 (`git = "writable"`). If bwrap is missing, `run` refuses; `--unsandboxed` runs without it and
 the handover says so.
 
+A repository can tighten the policy in `.dog-walker/config.toml` (the same keys: `network`,
+`git`, `read_only_dirs`, `writable_dirs`, `env`), and a task can tighten `network` and `git`
+with `--network off` and `--git read-only`. Neither can loosen what the profile allows: a
+read-only directory can be added only inside the project, a writable directory, or one the
+profile already keeps read-only.
+
 A task is stopped when its profile's `timeout_minutes` passes (30 minutes by default; it
 takes a fraction of a minute, so `0.5` is 30 seconds, up to 525600 for a year), or sooner with
 `dog-walker cancel <id>` from another shell in the project directory. Either way the harness

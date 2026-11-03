@@ -13,8 +13,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde::Deserialize;
+
 use crate::config::Profile;
-use crate::error::SandboxError;
+use crate::error::{OverrideError, SandboxError};
 
 /// The parts of the host a sandboxed process needs in order to run at all, read-only.
 const SYSTEM: [&str; 5] = ["/bin", "/sbin", "/usr", "/lib", "/lib64"];
@@ -54,7 +56,7 @@ pub struct Policy {
 
 impl Policy {
     /// The policy the profile asks for, with its directories canonical and checked.
-    fn checked(profile: &Profile) -> Result<Policy, SandboxError> {
+    pub fn checked(profile: &Profile) -> Result<Policy, SandboxError> {
         let read_only_dirs = directories(&profile.read_only_dirs)?;
         let writable_dirs = directories(&profile.writable_dirs)?;
         for dir in &read_only_dirs {
@@ -72,7 +74,7 @@ impl Policy {
     }
 
     /// The policy as written, for a run that does not apply it.
-    fn as_written(profile: &Profile) -> Policy {
+    pub fn as_written(profile: &Profile) -> Policy {
         Policy {
             network: profile.network,
             git_writable: profile.git_writable,
@@ -117,6 +119,238 @@ impl Policy {
     }
 }
 
+/// A policy someone asks for on top of another: absent fields inherit, and a present one may
+/// only tighten. This is what a project's `.dog-walker/config.toml` and a task's flags carry.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Request {
+    pub network: Option<bool>,
+    pub git: Option<String>,
+    pub read_only_dirs: Option<Vec<PathBuf>>,
+    pub writable_dirs: Option<Vec<PathBuf>>,
+    pub env: Option<Vec<String>>,
+}
+
+impl Request {
+    /// The policy this request makes out of `parent`, or the field it would loosen. `origin`
+    /// says who asked: the project config or the task. `project` is what makes a directory
+    /// change a real tightening: taking write access away from part of the project is fine,
+    /// granting read access is not, and giving write access back never is.
+    pub fn resolve(
+        &self,
+        parent: &Policy,
+        project: &Path,
+        origin: &str,
+    ) -> Result<Policy, OverrideError> {
+        let loosens = |field: &'static str, detail: String| OverrideError::Loosens {
+            origin: origin.to_owned(),
+            field,
+            detail,
+        };
+        if let Some(value) = self.git.as_deref().filter(|value| !printable(value)) {
+            return Err(OverrideError::Git {
+                origin: origin.to_owned(),
+                value: format!("{value:?}"),
+            });
+        }
+        let network = self.network.unwrap_or(parent.network);
+        if network && !parent.network {
+            return Err(loosens(
+                "network",
+                "the policy it inherits has the network off".to_owned(),
+            ));
+        }
+        let git_writable = match self.git.as_deref() {
+            None => parent.git_writable,
+            Some("read-only") => false,
+            Some("writable") => true,
+            Some(other) => {
+                return Err(OverrideError::Git {
+                    origin: origin.to_owned(),
+                    value: other.to_owned(),
+                });
+            }
+        };
+        if git_writable && !parent.git_writable {
+            return Err(loosens(
+                "git",
+                "the policy it inherits keeps `.git` read-only".to_owned(),
+            ));
+        }
+        let (read_only_dirs, writable_dirs) = self.dirs(parent, project, origin)?;
+        let env = self.env.clone().unwrap_or_else(|| parent.env.clone());
+        if env.iter().any(|name| !printable(name)) {
+            return Err(loosens("env", "a variable name cannot be shown".to_owned()));
+        }
+        if let Some(name) = env.iter().find(|name| !parent.env.contains(name)) {
+            return Err(loosens(
+                "env",
+                format!("`{name}` is not one the policy it inherits lists"),
+            ));
+        }
+        Ok(Policy {
+            network,
+            git_writable,
+            read_only_dirs,
+            writable_dirs,
+            env,
+        })
+    }
+
+    /// The effective directory lists, or the field they would loosen. A directory is judged
+    /// by what its mount does: winning write access is a loosening, losing read access is not.
+    fn dirs(
+        &self,
+        parent: &Policy,
+        project: &Path,
+        origin: &str,
+    ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), OverrideError> {
+        let loosens = |field: &'static str, detail: String| OverrideError::Loosens {
+            origin: origin.to_owned(),
+            field,
+            detail,
+        };
+        // The policy it inherits is canonical when it came from the profile, but as written
+        // when the run is unsandboxed: canonicalise both sides so they compare.
+        let parent_ro: Vec<PathBuf> = parent
+            .read_only_dirs
+            .iter()
+            .map(|dir| canonical(dir))
+            .collect();
+        let parent_writable: Vec<PathBuf> = parent
+            .writable_dirs
+            .iter()
+            .map(|dir| canonical(dir))
+            .collect();
+        let read_only_dirs = match &self.read_only_dirs {
+            Some(dirs) => {
+                let mut paths = Vec::with_capacity(dirs.len());
+                for dir in dirs {
+                    paths.push(shown(dir, "read_only_dirs", origin)?);
+                }
+                paths
+            }
+            None => parent_ro.clone(),
+        };
+        let writable_dirs = match &self.writable_dirs {
+            Some(dirs) => {
+                let mut paths = Vec::with_capacity(dirs.len());
+                for dir in dirs {
+                    paths.push(shown(dir, "writable_dirs", origin)?);
+                }
+                paths
+            }
+            None => parent_writable.clone(),
+        };
+        // A path the handover cannot show would forge its record.
+        if let Some(dir) = read_only_dirs.iter().find(|dir| !is_printable(dir)) {
+            return Err(loosens(
+                "read_only_dirs",
+                format!("`{}` cannot be shown", dir.display()),
+            ));
+        }
+        if let Some(dir) = writable_dirs.iter().find(|dir| !is_printable(dir)) {
+            return Err(loosens(
+                "writable_dirs",
+                format!("`{}` cannot be shown", dir.display()),
+            ));
+        }
+        // A directory can only be added to a writable list as a loosening.
+        if let Some(dir) = writable_dirs
+            .iter()
+            .find(|dir| !parent_writable.contains(dir))
+        {
+            return Err(loosens(
+                "writable_dirs",
+                format!(
+                    "`{}` is not one the policy it inherits lists",
+                    dir.display()
+                ),
+            ));
+        }
+        // A read-only directory may be added only where it takes write access away: inside
+        // the project, a writable directory, or one the policy already keeps read-only.
+        if let Some(dir) = read_only_dirs.iter().find(|dir| {
+            let covered = dir.starts_with(project)
+                || writable_dirs
+                    .iter()
+                    .any(|writable| dir.starts_with(writable))
+                || parent_ro.iter().any(|inherited| dir.starts_with(inherited));
+            !parent_ro.contains(dir) && !covered
+        }) {
+            return Err(loosens(
+                "read_only_dirs",
+                format!(
+                    "`{}` is more to read than the policy it inherits",
+                    dir.display()
+                ),
+            ));
+        }
+        // Dropping one gives write access back if it covered the project or a writable dir.
+        if let Some(dir) = parent_ro.iter().find(|dir| {
+            !read_only_dirs.contains(dir)
+                && (dir.starts_with(project)
+                    || project.starts_with(dir)
+                    || writable_dirs
+                        .iter()
+                        .any(|writable| dir.starts_with(writable) || writable.starts_with(dir)))
+        }) {
+            return Err(loosens(
+                "read_only_dirs",
+                format!(
+                    "`{}` was protecting the project or a writable directory",
+                    dir.display()
+                ),
+            ));
+        }
+        Ok((read_only_dirs, writable_dirs))
+    }
+}
+
+/// Whether a path can be shown: no control characters, no Unicode line separators and no
+/// bidirectional controls that would reorder an error message.
+fn is_printable(path: &Path) -> bool {
+    !path
+        .to_string_lossy()
+        .chars()
+        .any(crate::config::is_unsafe_char)
+}
+
+/// The same for a plain string.
+fn printable(text: &str) -> bool {
+    text.chars().all(|c| !crate::config::is_unsafe_char(c))
+}
+
+/// A directory as it will be mounted, when it can be resolved; the written path otherwise.
+fn canonical(dir: &Path) -> PathBuf {
+    fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned())
+}
+
+/// A directory a request names, as it will be mounted: it must be absolute, exist and be a
+/// directory, and its name must be showable, since the handover lists the canonical path.
+fn shown(dir: &Path, field: &'static str, origin: &str) -> Result<PathBuf, OverrideError> {
+    let detail = if !is_printable(dir) {
+        "a directory name cannot be shown".to_owned()
+    } else if !dir.is_absolute() {
+        format!("`{}` is not an absolute path", dir.display())
+    } else {
+        match fs::canonicalize(dir) {
+            Ok(canonical) => {
+                if fs::metadata(&canonical).is_ok_and(|metadata| metadata.is_dir()) {
+                    return Ok(canonical);
+                }
+                format!("`{}` is not a directory", dir.display())
+            }
+            Err(_) => format!("`{}` is not a directory", dir.display()),
+        }
+    };
+    Err(OverrideError::Loosens {
+        origin: origin.to_owned(),
+        field,
+        detail,
+    })
+}
+
 /// What a run does about the sandbox.
 #[derive(Debug)]
 pub struct Plan {
@@ -137,6 +371,27 @@ impl Plan {
             });
         }
         let policy = Policy::checked(profile)?;
+        above_the_project(&policy, project)?;
+        Ok(Plan {
+            sandboxed: true,
+            policy,
+            bwrap: Some(resolve_bwrap(project)?),
+        })
+    }
+
+    /// The plan for a policy that a project or a task has already tightened.
+    pub fn from_policy(
+        policy: Policy,
+        project: &Path,
+        unsandboxed: bool,
+    ) -> Result<Plan, SandboxError> {
+        if unsandboxed {
+            return Ok(Plan {
+                sandboxed: false,
+                policy,
+                bwrap: None,
+            });
+        }
         above_the_project(&policy, project)?;
         Ok(Plan {
             sandboxed: true,
@@ -461,6 +716,121 @@ mod tests {
     /// A sandbox the test can build: skipped silently when bwrap cannot run here.
     fn plan(profile: &Profile, project: &Path) -> Option<Plan> {
         Plan::new(profile, project, false).ok()
+    }
+
+    #[test]
+    fn a_request_may_tighten_and_is_named_when_it_loosens() {
+        let parent = Policy {
+            network: false,
+            git_writable: true,
+            read_only_dirs: vec![PathBuf::from("/shared")],
+            writable_dirs: vec![PathBuf::from("/cache")],
+            env: vec!["HOME".to_owned()],
+        };
+        // Absent fields inherit.
+        let project = Path::new("/work/project");
+        let same = Request::default()
+            .resolve(&parent, project, "the task")
+            .unwrap();
+        assert_eq!(same, parent);
+        // Stricter: the network stays off, git becomes read-only, the lists shrink.
+        let tighter = Request {
+            network: Some(false),
+            git: Some("read-only".to_owned()),
+            read_only_dirs: Some(Vec::new()),
+            writable_dirs: Some(Vec::new()),
+            env: Some(Vec::new()),
+        }
+        .resolve(&parent, project, "the task")
+        .unwrap();
+        assert!(!tighter.git_writable);
+        assert_eq!(tighter.read_only_dirs.len(), 0);
+        // Looser, one field at a time; the `git` one needs a read-only parent.
+        let parent = Policy {
+            git_writable: false,
+            ..parent.clone()
+        };
+        for (request, field) in [
+            (
+                Request {
+                    network: Some(true),
+                    ..Request::default()
+                },
+                "network",
+            ),
+            // A `git` request against a read-only parent.
+            (
+                Request {
+                    git: Some("writable".to_owned()),
+                    ..Request::default()
+                },
+                "git",
+            ),
+            (
+                Request {
+                    read_only_dirs: Some(vec![PathBuf::from("/etc")]),
+                    ..Request::default()
+                },
+                "read_only_dirs",
+            ),
+            (
+                Request {
+                    writable_dirs: Some(vec![PathBuf::from("/cache"), PathBuf::from("/var")]),
+                    ..Request::default()
+                },
+                "writable_dirs",
+            ),
+            (
+                Request {
+                    env: Some(vec!["HOME".to_owned(), "PATH".to_owned()]),
+                    ..Request::default()
+                },
+                "env",
+            ),
+        ] {
+            let error = request
+                .resolve(&parent, project, "the project config")
+                .unwrap_err();
+            assert!(error.to_string().contains(field), "{field}: {error}");
+            assert!(error.to_string().contains("the project config"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_read_only_directory_inside_the_project_can_be_added_but_not_dropped() {
+        let base = std::env::temp_dir().join(format!(
+            "dog-walker-sandbox-{}-add-drop",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        let project = base.join("project");
+        let protected = project.join("protected");
+        fs::create_dir_all(&protected).unwrap();
+        let project = fs::canonicalize(&project).unwrap();
+        let protected = fs::canonicalize(&protected).unwrap();
+        let mut parent = Policy {
+            network: true,
+            git_writable: false,
+            read_only_dirs: Vec::new(),
+            writable_dirs: Vec::new(),
+            env: Vec::new(),
+        };
+        let add = Request {
+            read_only_dirs: Some(vec![protected.clone()]),
+            ..Request::default()
+        };
+        assert!(add.resolve(&parent, &project, "the task").is_ok());
+        // Once the profile protects it, a request may not take that away.
+        parent.read_only_dirs = vec![protected];
+        let drop = Request {
+            read_only_dirs: Some(Vec::new()),
+            ..Request::default()
+        };
+        let error = drop
+            .resolve(&parent, &project, "the project config")
+            .unwrap_err();
+        assert!(error.to_string().contains("read_only_dirs"), "{error}");
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

@@ -26,6 +26,17 @@ pub enum ConfigError {
     NoMain,
     #[error("exactly one profile must be main, but these are: {names}")]
     ManyMain { names: String },
+    #[error("cannot read the project config {}: {source}", path.display())]
+    ReadProjectConfig { path: PathBuf, source: io::Error },
+    #[error("the project config {} is larger than a policy file should be", path.display())]
+    ProjectConfigTooLarge { path: PathBuf },
+    #[error("the project config {} is not a regular file inside the project", path.display())]
+    UnsafeProjectConfig { path: PathBuf },
+    #[error("invalid project config {}:\n{source}", path.display())]
+    ProjectConfig {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
     #[error("no profile named `{name}`: `profiles` lists them")]
     UnknownProfile { name: String },
     #[error("`{profile}` is the main profile: pass --allow-main to delegate to it")]
@@ -89,6 +100,19 @@ pub enum LaunchError {
     },
     #[error("cannot wait for the harness: {source}")]
     Wait { source: io::Error },
+}
+
+/// Why a project or task setting was refused: it would loosen the policy it inherits.
+#[derive(Debug, thiserror::Error)]
+pub enum OverrideError {
+    #[error("{origin} cannot loosen `{field}`: {detail}")]
+    Loosens {
+        origin: String,
+        field: &'static str,
+        detail: String,
+    },
+    #[error("{origin}: `{value}` is not a `git` mode (read-only or writable)")]
+    Git { origin: String, value: String },
 }
 
 /// Why the sandbox could not be set up.
@@ -157,6 +181,8 @@ pub enum Error {
     Task(#[from] TaskError),
     #[error(transparent)]
     Sandbox(#[from] SandboxError),
+    #[error(transparent)]
+    Override(#[from] OverrideError),
     #[error(transparent)]
     Handover(#[from] HandoverError),
     #[error(transparent)]
