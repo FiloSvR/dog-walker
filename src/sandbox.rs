@@ -55,6 +55,10 @@ pub struct Policy {
     pub read_only_dirs: Vec<PathBuf>,
     pub writable_dirs: Vec<PathBuf>,
     pub env: Vec<String>,
+    /// What the adapter sets itself, shown with its values in the handover: a mode like dsh's
+    /// `DSH_PERMISSION_MODE` changes what the harness may do, so the record must name it, not
+    /// just the names the profile passes through.
+    pub fixed_env: Vec<(String, String)>,
     /// Variables whose values are redacted from the handover and the log (R18).
     pub secrets: Vec<String>,
 }
@@ -76,6 +80,8 @@ impl Policy {
             writable_dirs,
             // The profile's names and the ones its adapter needs.
             env: crate::adapter::env(profile),
+            // The values its adapter sets itself, for the handover's sandbox section.
+            fixed_env: crate::adapter::fixed_env(profile),
             secrets: profile.secrets.clone(),
         })
     }
@@ -88,6 +94,8 @@ impl Policy {
             read_only_dirs: profile.read_only_dirs.clone(),
             writable_dirs: profile.writable_dirs.clone(),
             env: profile.env.clone(),
+            // The values its adapter sets itself, for the handover's sandbox section.
+            fixed_env: crate::adapter::fixed_env(profile),
             secrets: profile.secrets.clone(),
         }
     }
@@ -114,6 +122,10 @@ impl Policy {
     pub fn render(&self, sandboxed: bool) -> String {
         if !sandboxed {
             let mut text = "- tool: none (--unsandboxed)\n- network: not enforced\n- git: not enforced\n- directories: not enforced\n- environment: inherited, not cleaned".to_owned();
+            if !self.fixed_env.is_empty() {
+                text.push_str("\n- set by the adapter: ");
+                text.push_str(&self.fixed_env_pairs());
+            }
             if !self.secrets.is_empty() {
                 text.push_str("\n- secrets: ");
                 text.push_str(&self.secrets.join(", "));
@@ -148,12 +160,26 @@ impl Policy {
             list(&self.read_only_dirs),
             names.join(", "),
         );
+        if !self.fixed_env.is_empty() {
+            text.push_str("\n- set by the adapter: ");
+            text.push_str(&self.fixed_env_pairs());
+        }
         if !self.secrets.is_empty() {
             text.push_str("\n- secrets: ");
             text.push_str(&self.secrets.join(", "));
             text.push_str(" (redacted)");
         }
         text
+    }
+
+    /// The adapter's own variables as `NAME=value`, joined for the handover: the values are
+    /// the harness's documented modes, not secrets.
+    fn fixed_env_pairs(&self) -> String {
+        self.fixed_env
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -238,6 +264,9 @@ impl Request {
                 .filter(|name| env.contains(name))
                 .cloned()
                 .collect(),
+            // A request may only tighten the environment, never what the adapter sets: the
+            // values it chose travel with the policy it tightens.
+            fixed_env: parent.fixed_env.clone(),
             env,
         })
     }
@@ -875,6 +904,7 @@ mod tests {
             read_only_dirs: vec![PathBuf::from("/shared")],
             writable_dirs: vec![PathBuf::from("/cache")],
             env: vec!["HOME".to_owned()],
+            fixed_env: Vec::new(),
             secrets: vec!["HOME".to_owned()],
         };
         // Absent fields inherit.
@@ -964,6 +994,7 @@ mod tests {
             read_only_dirs: Vec::new(),
             writable_dirs: Vec::new(),
             env: Vec::new(),
+            fixed_env: Vec::new(),
             secrets: Vec::new(),
         };
         let add = Request {
@@ -1004,6 +1035,42 @@ mod tests {
         assert!(
             text.contains(&format!("- writable dirs: {}", shared.display())),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn the_handover_names_the_variables_the_adapter_sets_itself() {
+        // dsh has no flag for its permission mode, so its adapter sets a variable whose
+        // value changes what the harness may do; the handover must show it, sandboxed or
+        // not (issue #48).
+        let mut dsh = profile();
+        dsh.harness = Harness::Dsh;
+        dsh.command = None;
+        dsh.dsh_profile = Some(ProfileName::parse("headless").unwrap());
+        let sandboxed = Policy::checked(&dsh).unwrap().render(true);
+        assert!(
+            sandboxed.contains("- set by the adapter: DSH_PERMISSION_MODE=danger-full-access"),
+            "{sandboxed}"
+        );
+        let unsandboxed = Policy::as_written(&dsh).render(false);
+        assert!(
+            unsandboxed.contains("- set by the adapter: DSH_PERMISSION_MODE=danger-full-access"),
+            "{unsandboxed}"
+        );
+        // A profile with its own `command` is not running the adapter, and a harness whose
+        // adapter sets nothing leaves nothing to record: neither names a variable.
+        let mut own = dsh.clone();
+        own.command = Some(vec!["fake".to_owned()]);
+        assert!(own.command.as_ref().is_some_and(|c| !c.is_empty()));
+        let own_text = Policy::checked(&own).unwrap().render(true);
+        assert!(!own_text.contains("- set by the adapter:"), "{own_text}");
+        // Pi's adapter sets nothing, so neither does a profile that runs it.
+        let mut other = profile();
+        other.command = None;
+        let other_text = Policy::as_written(&other).render(false);
+        assert!(
+            !other_text.contains("- set by the adapter:"),
+            "{other_text}"
         );
     }
 
