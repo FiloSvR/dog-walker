@@ -6,7 +6,7 @@
 //! in a PID namespace of its own, so nothing it detaches outlives the sandbox.
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -503,6 +503,63 @@ impl Plan {
             self.env()?;
         }
         Ok(())
+    }
+
+    /// Only the program check of `check`: the harness resolves and is executable.
+    pub fn check_program(&self, profile: &Profile, project: &Path) -> Result<(), SandboxError> {
+        let argv = crate::adapter::argv(profile)?;
+        let Some((program, _)) = argv.split_first() else {
+            return Err(SandboxError::Adapter(crate::error::AdapterError::Empty {
+                harness: profile.harness,
+            }));
+        };
+        resolve_program(program, project).map(|_| ())
+    }
+
+    /// The names the policy passes through that are not set in this environment.
+    pub fn unset_env(&self) -> Vec<String> {
+        self.policy
+            .env
+            .iter()
+            .filter(|name| env::var_os(name).is_none())
+            .cloned()
+            .collect()
+    }
+
+    /// `sh -c script arguments…` under this plan, for `doctor`: the sandbox the harness would
+    /// get, running a small system program instead of the harness. The variables that are not
+    /// set are left out, so one missing name does not hide the other checks.
+    pub fn probe(
+        &self,
+        project: &Path,
+        script: &str,
+        arguments: &[&OsStr],
+    ) -> Result<Command, SandboxError> {
+        let shell = resolve_program(OsStr::new("sh"), project)?;
+        let mut command = if self.sandboxed {
+            let bwrap = self.bwrap.as_ref().ok_or(SandboxError::NoTool)?;
+            let mut command = Command::new(bwrap);
+            command.env_clear();
+            let mut plan = Plan {
+                sandboxed: true,
+                policy: self.policy.clone(),
+                bwrap: self.bwrap.clone(),
+            };
+            plan.policy.env.retain(|name| env::var_os(name).is_some());
+            plan.sandbox_args(
+                &mut command,
+                project,
+                &shell,
+                &[],
+                Path::new("/nonexistent"),
+            )?;
+            command.arg(&shell);
+            command
+        } else {
+            Command::new(&shell)
+        };
+        command.arg("-c").arg(script).arg("probe").args(arguments);
+        Ok(command)
     }
 
     /// The command for the harness: the profile's argv with the brief last, under bwrap when

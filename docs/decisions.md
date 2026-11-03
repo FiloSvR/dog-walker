@@ -152,3 +152,15 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     Codex adapters pass their flags. A profile with its own `command` is not running the adapter,
     and one that lists the name in `env` keeps its own (the host's) value. Rejected: leaving it to
     each user's profile (a silent, hard-to-diagnose failure: the task still ends `done`).
+
+17. **`doctor` runs the sandbox's checks with a probe, never the harness**
+    (D17, 2026-11-03, #47). Every harness setup failed the same way: silent or cryptic
+    (`Connection error.`, `EROFS … '/tmp'`, a missing variable). `dog-walker doctor <profile>`
+    reports all checks, one line each (`ok`, `skip`, `FAIL` with the fix), never a value, and
+    exits 1 on any failure. It reuses the run's policy and `bwrap` plan but runs `sh` in it: a
+    write in `$TMPDIR` (or the first writable directory), and a `curl` fetch of `--url`
+    (default `https://example.com`: it tests the trust store, not a provider), skipped when the
+    profile has no network. Rejected: launching the harness (a paid, model-dependent call);
+    stopping at the first failure (the user fixes one thing per run). dog-walker still opens no
+    connection of its own (R19): the probe program does. It creates no home and copies no
+    credential.

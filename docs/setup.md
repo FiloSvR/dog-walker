@@ -4,7 +4,10 @@ A profile runs inside a sandbox that sees the project, the system's programs and
 profile lists: `read_only_dirs`, `writable_dirs` and `env` (variable names, whose values come from
 the shell that runs `dog-walker`). So each harness needs its install directory, its credentials
 and a place to write, named in its profile. `dog-walker instructions` has a summary per harness;
-this page has the steps.
+this page has the steps. After any of them, `dog-walker doctor <profile>` checks the profile
+without starting a task or the harness: the directories, the program, the variables (set in this
+shell), a write to the temporary directory and a TLS fetch inside the sandbox, with the fix for
+each failure.
 
 ## Claude Code with a subscription (no API key)
 

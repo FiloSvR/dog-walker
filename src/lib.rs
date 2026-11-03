@@ -7,6 +7,7 @@ compile_error!("dog-walker supports Linux only");
 pub mod adapter;
 pub mod cli;
 pub mod config;
+pub mod doctor;
 pub mod error;
 pub mod handover;
 pub mod launch;

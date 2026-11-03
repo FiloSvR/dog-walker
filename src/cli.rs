@@ -68,6 +68,17 @@ enum Command {
         #[arg(long, value_name = "read-only|writable", value_parser = ["read-only", "writable"])]
         git: Option<String>,
     },
+    /// Check that a profile's harness can run, without starting a task or the harness
+    Doctor {
+        /// The profile to check
+        profile: String,
+        /// The address the TLS check fetches
+        #[arg(long, value_name = "URL", default_value = crate::doctor::DEFAULT_URL)]
+        url: String,
+        /// Check without the sandbox
+        #[arg(long)]
+        unsandboxed: bool,
+    },
     /// Ask a running task to stop
     Cancel {
         /// The task id, the number in its folder name
@@ -156,7 +167,42 @@ fn execute(cli: &Cli, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<
             )
         }
         Command::Cancel { id } => cancel(id, stdout),
+        Command::Doctor {
+            profile,
+            url,
+            unsandboxed,
+        } => doctor(cli, profile, url, *unsandboxed, stdout),
     }
+}
+
+/// Prints one line per check; exit 1 when any failed.
+fn doctor(
+    cli: &Cli,
+    profile_name: &str,
+    url: &str,
+    unsandboxed: bool,
+    stdout: &mut dyn Write,
+) -> Result<u8, Error> {
+    let config = load(cli)?;
+    let profile = config
+        .profiles()
+        .iter()
+        .find(|profile| profile.name.as_str() == profile_name)
+        .ok_or_else(|| ConfigError::UnknownProfile {
+            name: profile_name.to_owned(),
+        })?;
+    let project =
+        fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
+            .map_err(|source| CliError::Project { source })?;
+    let checks = crate::doctor::diagnose(profile, &project, url, unsandboxed);
+    for check in &checks {
+        output::line(stdout, &check.line())?;
+    }
+    Ok(if checks.iter().any(crate::doctor::Check::failed) {
+        exit::TASK_NOT_DONE
+    } else {
+        exit::SUCCESS
+    })
 }
 
 /// Reads the config the command line points at.
