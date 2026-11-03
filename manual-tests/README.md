@@ -66,6 +66,7 @@ From the repo root (a git repository; `.dog-walker/` is ignored):
 | `02-sandbox-probe` | the sandbox from inside: project writes work, outside writes, `git commit` and a secret do not leak |
 | `03-no-result-path` | a brief that never names the result file still ends `done`: the launcher adds it |
 | `04-review-worker-diff` | the full loop: a `reviewer` reviews a `worker`'s uncommitted change from its handover |
+| `06c-ranges` | the same question with line ranges and "read only these": the heavy tail of `06b-rich` goes away (the ranges are those of the commit it was written on; update them when the code moves) |
 | `06a-thin` and `06b-rich` | the same comparison on a question spread over three files; the one that shows a saving on Pi and Codex |
 | `05a-thin` and `05b-rich` | the same question with a bare brief and with one that hands over what the main harness knows: the handover's `tokens`, `turns` and `cost_usd` show what the second saves |
 

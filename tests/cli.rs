@@ -191,6 +191,7 @@ fn at27_instructions_name_run_exit_code_and_handover() {
     // The main harness is told when a rich brief pays and when it does not (R24).
     assert!(text.contains("When to write a rich brief"), "{text}");
     assert!(text.contains("Keep it short when"), "{text}");
+    assert!(text.contains("line ranges"), "{text}");
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them: true when
