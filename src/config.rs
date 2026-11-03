@@ -241,8 +241,17 @@ fn validate(name: &str, raw: RawProfile) -> Result<Profile, ConfigError> {
                         .to_owned(),
                 ));
             }
-            let name = ProfileName::parse(&name)
-                .map_err(|reason| fail(format!("`dsh_profile` {reason}")))?;
+            let name = ProfileName::parse(&name).map_err(|reason| {
+                fail(format!(
+                    "`dsh_profile` must be a dsh profile name: {reason}"
+                ))
+            })?;
+            if name.as_str() == "node_modules" {
+                return Err(fail(
+                    "`dsh_profile` cannot be `node_modules`: dsh keeps its packages there"
+                        .to_owned(),
+                ));
+            }
             if harness != Harness::Dsh {
                 return Err(fail(
                     "`dsh_profile` is only for `harness = \"dsh\"`: it names the dsh profile to boot"
