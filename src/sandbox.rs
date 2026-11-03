@@ -29,7 +29,7 @@ const FORBIDDEN_ANY: [&str; 3] = ["/proc", "/sys", "/dev"];
 const FORBIDDEN_EXACT: [&str; 2] = ["/run", "/tmp"];
 
 /// The system files a networked harness needs: names, certificates and the loader's cache.
-const SYSTEM_FILES: [&str; 10] = [
+const SYSTEM_FILES: [&str; 11] = [
     "/etc/resolv.conf",
     "/etc/hosts",
     "/etc/nsswitch.conf",
@@ -42,6 +42,9 @@ const SYSTEM_FILES: [&str; 10] = [
     "/etc/localtime",
     // The trust store on Fedora and RHEL: `/etc/ssl/certs` there points into it.
     "/etc/pki/ca-trust",
+    // Where Fedora's system Node and OpenSSL look for roots: without it TLS from Node fails
+    // with "unable to get local issuer certificate" although `curl` works.
+    "/etc/pki/tls/certs",
 ];
 
 /// The environment a profile's harness gets, and the handover records.
@@ -768,6 +771,12 @@ mod tests {
     use super::*;
 
     use crate::config::{Harness, ProfileName};
+
+    #[test]
+    fn the_system_node_trust_store_is_mounted() {
+        // Fedora's Node reads its roots from here, not from `/etc/ssl/certs`.
+        assert!(SYSTEM_FILES.contains(&"/etc/pki/tls/certs"));
+    }
 
     fn profile() -> Profile {
         Profile {

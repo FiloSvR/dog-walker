@@ -11,6 +11,9 @@ State, in plain words, what the secondary needs and nothing else:
 - **Context**: what it must know that it cannot find in the repository.
 - **Constraints**: what it must not do or touch.
 - **Done when**: a checklist you can verify afterwards.
+- **Where to answer**: the secondary is told nothing but the brief, so end it with "write your
+  result to the file named by `$DOG_WALKER_RESULT_PATH`, and nowhere else". Without that line
+  it has no result file, and the task ends `failed` with no result.
 
 ## 2. Run it
 
