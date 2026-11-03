@@ -323,7 +323,20 @@ impl Fixture {
             .find(|entry| entry.file_name().to_string_lossy().starts_with(id))
             .unwrap_or_else(|| panic!("no task folder for {id}"))
             .path();
-        fs::read_to_string(folder.join("handover.md")).unwrap()
+        // The folder exists a moment before dog-walker writes the handover into it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match fs::read_to_string(folder.join("handover.md")) {
+                Ok(text) => return text,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("no handover in {}: {error}", folder.display()),
+            }
+        }
     }
 
     /// The harness's own result, as the harness left it.
