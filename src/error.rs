@@ -28,6 +28,8 @@ pub enum ConfigError {
     ManyMain { names: String },
     #[error("cannot read the project config {}: {source}", path.display())]
     ReadProjectConfig { path: PathBuf, source: io::Error },
+    #[error("the project config {} is larger than a policy file should be", path.display())]
+    ProjectConfigTooLarge { path: PathBuf },
     #[error("the project config {} is not a regular file inside the project", path.display())]
     UnsafeProjectConfig { path: PathBuf },
     #[error("invalid project config {}:\n{source}", path.display())]

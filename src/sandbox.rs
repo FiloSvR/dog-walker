@@ -226,9 +226,7 @@ impl Request {
             Some(dirs) => {
                 let mut paths = Vec::with_capacity(dirs.len());
                 for dir in dirs {
-                    paths.push(
-                        existing_dir(dir).map_err(|detail| loosens("read_only_dirs", detail))?,
-                    );
+                    paths.push(shown(dir, "read_only_dirs", origin)?);
                 }
                 paths
             }
@@ -238,9 +236,7 @@ impl Request {
             Some(dirs) => {
                 let mut paths = Vec::with_capacity(dirs.len());
                 for dir in dirs {
-                    paths.push(
-                        existing_dir(dir).map_err(|detail| loosens("writable_dirs", detail))?,
-                    );
+                    paths.push(shown(dir, "writable_dirs", origin)?);
                 }
                 paths
             }
@@ -330,18 +326,29 @@ fn canonical(dir: &Path) -> PathBuf {
     fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned())
 }
 
-/// A directory a request names: it must exist and be a directory, since the sandbox would
-/// otherwise fail to mount it after a task folder exists.
-fn existing_dir(dir: &Path) -> Result<PathBuf, String> {
-    if !dir.is_absolute() {
-        return Err(format!("`{}` is not an absolute path", dir.display()));
-    }
-    let canonical =
-        fs::canonicalize(dir).map_err(|_| format!("`{}` is not a directory", dir.display()))?;
-    if !fs::metadata(&canonical).is_ok_and(|metadata| metadata.is_dir()) {
-        return Err(format!("`{}` is not a directory", dir.display()));
-    }
-    Ok(canonical)
+/// A directory a request names, as it will be mounted: it must be absolute, exist and be a
+/// directory, and its name must be showable, since the handover lists the canonical path.
+fn shown(dir: &Path, field: &'static str, origin: &str) -> Result<PathBuf, OverrideError> {
+    let detail = if !is_printable(dir) {
+        "a directory name cannot be shown".to_owned()
+    } else if !dir.is_absolute() {
+        format!("`{}` is not an absolute path", dir.display())
+    } else {
+        match fs::canonicalize(dir) {
+            Ok(canonical) => {
+                if fs::metadata(&canonical).is_ok_and(|metadata| metadata.is_dir()) {
+                    return Ok(canonical);
+                }
+                format!("`{}` is not a directory", dir.display())
+            }
+            Err(_) => format!("`{}` is not a directory", dir.display()),
+        }
+    };
+    Err(OverrideError::Loosens {
+        origin: origin.to_owned(),
+        field,
+        detail,
+    })
 }
 
 /// What a run does about the sandbox.

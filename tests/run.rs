@@ -1661,7 +1661,7 @@ fn at4_a_request_directory_must_exist() {
 #[test]
 fn at4_a_directory_that_cannot_be_shown_is_refused() {
     let fixture = Fixture::new("at4-forge", "result");
-    let evil = fixture.dir.path().join("evil\n- network: on");
+    let evil = fixture.project.join("evil\n- network: on");
     fs::create_dir_all(&evil).unwrap();
     std::os::unix::fs::symlink(&evil, fixture.project.join("link")).unwrap();
     project_config(

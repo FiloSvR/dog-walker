@@ -352,51 +352,69 @@ fn check_text(field: &str, value: &str) -> Result<(), String> {
 
 /// The project's own policy, `.dog-walker/config.toml`, which may only tighten the profile.
 pub fn project_config(project: &Path) -> Result<Option<ProjectConfig>, ConfigError> {
-    let path = project.join(".dog-walker").join("config.toml");
+    let dir = project.join(".dog-walker");
+    let path = dir.join("config.toml");
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(ConfigError::ReadProjectConfig { path, source }),
     };
     // A config that points out of the project could read anything the runner can (or be a
-    // FIFO that hangs the run): only a regular file inside the project's own `.dog-walker`.
-    let canonical = fs::canonicalize(&path).map_err(|source| ConfigError::ReadProjectConfig {
-        path: path.clone(),
-        source,
-    })?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || !canonical.starts_with(project) {
-        return Err(ConfigError::UnsafeProjectConfig { path: canonical });
+    // FIFO that hangs the run): a regular file, opened through its own directory without
+    // following a link, without blocking, and read through the descriptor.
+    let unsafe_path = ConfigError::UnsafeProjectConfig { path: path.clone() };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(unsafe_path);
     }
-    // Opened without following a link and read through the descriptor, so a swap between
-    // the check and the read cannot point the read somewhere else.
-    let fd = rustix::fs::open(
-        &canonical,
-        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+    let flags =
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC;
+    let read_error = |source: rustix::io::Errno| ConfigError::ReadProjectConfig {
+        path: path.clone(),
+        source: io::Error::from(source),
+    };
+    let dir_fd = rustix::fs::open(
+        &dir,
+        flags | rustix::fs::OFlags::DIRECTORY,
         rustix::fs::Mode::empty(),
     )
-    .map_err(|source| ConfigError::ReadProjectConfig {
-        path: canonical.clone(),
-        source: io::Error::from(source),
-    })?;
+    .map_err(read_error)?;
+    let canonical_dir =
+        fs::canonicalize(&dir).map_err(|source| ConfigError::ReadProjectConfig {
+            path: path.clone(),
+            source,
+        })?;
+    if !canonical_dir.starts_with(project) {
+        return Err(unsafe_path);
+    }
+    let fd = rustix::fs::openat(
+        &dir_fd,
+        "config.toml",
+        flags | rustix::fs::OFlags::NONBLOCK,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(read_error)?;
     let file = fs::File::from(fd);
     let opened = file
         .metadata()
         .map_err(|source| ConfigError::ReadProjectConfig {
-            path: canonical.clone(),
+            path: path.clone(),
             source,
         })?;
     if !opened.is_file() {
-        return Err(ConfigError::UnsafeProjectConfig { path: canonical });
+        return Err(unsafe_path);
     }
     let mut text = String::new();
-    file.take(MAX_PROJECT_CONFIG)
+    file.take(MAX_PROJECT_CONFIG + 1)
         .read_to_string(&mut text)
         .map_err(|source| ConfigError::ReadProjectConfig {
-            path: canonical.clone(),
+            path: path.clone(),
             source,
         })?;
+    if text.len() as u64 > MAX_PROJECT_CONFIG {
+        return Err(ConfigError::ProjectConfigTooLarge { path });
+    }
     let request = toml::from_str(&text).map_err(|source| ConfigError::ProjectConfig {
-        path: canonical,
+        path: path.clone(),
         source,
     })?;
     Ok(Some(ProjectConfig { path, request }))
