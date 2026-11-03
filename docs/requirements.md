@@ -43,6 +43,7 @@ Profiles in a config file (harness, model, thinking effort, sandbox, timeout), o
 - R16 Default policy: read and write only inside the project directory; network on, switched off per profile with `network = false`; no git commit or push; cleaned environment with an allowlist.
 - R17 If the sandbox tool is missing, the run is refused unless the user explicitly opts out.
 - R18 Configured secret values are redacted from the handover, the logs and the result file.
+- R22 `dog-walker doctor <profile>` runs the checks a task would meet, without a task or the harness: the directories, the sandbox, the program, the `env` names, a write to the temporary directory and a TLS fetch inside the sandbox. One line per check, no values, exit 1 on any failure.
 - R21 `dog-walker instructions` prints a short text for the main harness: how to write a brief, call `run`, read the exit code and find the handover.
 - R19 No server, daemon or telemetry; dog-walker makes no network request itself.
 - R16a By default the project's `.git` is read-only inside the sandbox, so commit and push fail at OS level while `git log` and `git diff` work. A profile can list `.git` as writable (R20); push still fails without credentials.
@@ -84,5 +85,6 @@ Delegation back from a secondary. A background or pollable mode. ACP. Cost budge
 - [ ] AT24 (R19) A normal run opens no listening socket, starts no daemon and makes no network request of its own.
 - [ ] AT26 (R16a) By default `git commit`, `git add` and `git push` fail inside the sandbox while `git log` and `git diff` work; with `.git` listed writable in the profile, `git commit` works.
 - [ ] AT28 (R4) An adapter runs its harness with the profile's model and effort (or its own profile, as dsh does), non-interactively, and its result reaches the handover; every harness has one.
+- [ ] AT29 (R22) `doctor` passes a healthy profile, reports every failure (unset variable, unwritable temporary directory, missing directory) with a fix and exits 1, and prints no value.
 - [ ] AT27 (R21) `dog-walker instructions` prints text that names `run`, the exit code and the handover location.
 - [ ] AT25 (R20) Extra directories and passed variables from a profile are available to the harness; the handover lists them, the network setting and the variable names.

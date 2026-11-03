@@ -20,6 +20,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 | `launch` | Starting the harness, waiting, and ending its process group (R5, R14) | built (#16, #5) |
 | `sandbox` | The bwrap command, the profile's policy, and what the handover records (R15-R17, R20) | built (#4) |
 | `adapter` | The seam between a profile and its harness's argv (R4) | built (#10) |
+| `doctor` | The profile's checks, run in its sandbox with a probe instead of the harness (R22, D17) | built (#47) |
 | `slots` | The run records, the per harness and model limit, and the overlap warning (R9) | built (#7) |
 
 Invariants, each with the test that checks it:

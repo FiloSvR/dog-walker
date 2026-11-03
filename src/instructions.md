@@ -47,6 +47,7 @@ since dog-walker's sandbox is the boundary. Its sandbox needs dsh's install dire
 the directory it names (default `$HOME/.dsh`) in `writable_dirs`, as does dsh's provider key in
 `env`, and a `TMPDIR` inside it, since the sandbox has no `/tmp`. `docs/setup.md` has the steps.
 
+`dog-walker doctor <profile>` checks a profile's sandbox, program and variables without a task.
 `dog-walker profiles` lists the profiles, the main one first. `run` blocks until the task
 ends. It prints the path of the handover on stdout and logs on stderr. Running the main
 profile itself needs `--allow-main`.
