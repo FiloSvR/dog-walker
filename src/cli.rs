@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
+use crate::adapter;
 use crate::config::{self, Config, Profile};
 use crate::error::{CliError, ConfigError, Error};
 use crate::handover::{self, Handover};
@@ -227,12 +228,8 @@ fn run_task(
         }
         .into());
     }
-    if profile.command.is_none() {
-        return Err(ConfigError::NoCommand {
-            profile: profile.name.to_string(),
-        }
-        .into());
-    }
+    // A profile without a `command` runs its harness's adapter (R4).
+    adapter::argv(profile)?;
     let brief = brief(task, file)?;
     // From here on a Ctrl-C is a cancel that closes the handover, not a dead runner; before a
     // task exists, the default disposition is the right one.

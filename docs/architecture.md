@@ -19,6 +19,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 | `status` | The `Status` type and its transitions (R12) | built (#16) |
 | `launch` | Starting the harness, waiting, and ending its process group (R5, R14) | built (#16, #5) |
 | `sandbox` | The bwrap command, the profile's policy, and what the handover records (R15-R17, R20) | built (#4) |
+| `adapter` | The seam between a profile and its harness's argv (R4) | built (#10) |
 | `slots` | The run records, the per harness and model limit, and the overlap warning (R9) | built (#7) |
 
 Invariants, each with the test that checks it:
@@ -65,8 +66,9 @@ regular file, so a link or a pipe there is refused, not read (`at16_a_symlinked_
 
 ## The harness environment
 
-The harness is the profile's `command`, an argv list with the brief appended as its last
-argument, started in the project directory, with stdin closed and its output in `harness.log`.
+The harness is the profile's `command` or its harness's adapter argv (see "Adapters"), an argv
+list with the brief appended as its last argument, started in the project directory, with
+stdin closed and its output in `harness.log`.
 It reads, from the environment:
 
 - `DOG_WALKER_TASK_DIR`, `DOG_WALKER_HANDOVER_PATH`, `DOG_WALKER_RESULT_PATH`, `DOG_WALKER_TASK_ID`;
@@ -78,16 +80,16 @@ creates a folder, and so does a `run` with a dog-walker somewhere above it in th
 tree, which a harness cannot clear from its own environment (R8). The task that called it goes
 on. Inside the sandbox the harness has a PID namespace of its own, so the ancestry is not
 visible there and only the marker holds; a harness that clears the variable and can reach a
-dog-walker binary can still delegate (D12). Adapters (#10) will build
-that command line from the profile; until then a profile needs a `command` to run, and `run`
-says so before it creates a task. Inside the sandbox the
-environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the
-sandbox it is inherited, and the handover says so. A profile can also name the variables whose
+dog-walker binary can still delegate (D12). A profile's `command` is the argv to run; without
+one, its harness's adapter builds the argv (R4), and a harness whose adapter is not written yet
+names the profile and says so before a task exists. Inside the sandbox the
+environment is cleared and rebuilt from the policy's names (the profile's `env` and its
+adapter's) plus `PATH`; without the sandbox it is inherited, and the handover says so. A profile can also name the variables whose
 values are secrets (`secrets`): those values are replaced with `[redacted]` in the handover and
 in `harness.log` once the run ends (R18), and the handover lists the names, never the values.
 
-Checks: `at1_*`, `at6_*`, `at7_*`, `at9_a_task_cannot_start_tasks`,
-`at16_a_harness_that_cannot_start_fails_the_task`, `at23_*`. A
+Checks: `at1_*`, `at5_*`, `at6_*`, `at7_*`, `at9_a_task_cannot_start_tasks`,
+`at16_a_harness_that_cannot_start_fails_the_task`, `at23_*`, `at28_*`. A
 harness that ends with a non-zero status is a failed task, even when it left a result
 (`at16_a_nonzero_exit_is_a_failure`), and the handover path is printed as soon as the handover
 exists, so a failure to write the end state still leaves it on stdout
@@ -105,7 +107,8 @@ of landing in an empty directory. The harness runs in a PID namespace of its own
 processes are invisible, and nothing it detaches outlives the sandbox. The sandbox's `/dev` is
 its own small, writable device directory, never the host's. `.git` is mounted read-only unless
 the profile says `git = "writable"` (D6); the network is there unless `network = false` cuts it
-(D3); the environment is cleared and rebuilt from the profile's `env` names plus `PATH`.
+(D3); the environment is cleared and rebuilt from the policy's `env` names (the profile's and its
+adapter's) plus `PATH`.
 
 The policy reaches the handover as a `## Sandbox` section: the tool, the network setting, the
 git mode, the directories and the variable names (R20). A denial is an `EROFS` or `EACCES` in
@@ -154,6 +157,29 @@ run), `at4_a_project_config_that_loosens_is_named`, `at4_a_project_config_cannot
 refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit tests
 `a_request_may_tighten_and_is_named_when_it_loosens` and
 `a_read_only_directory_inside_the_project_can_be_added_but_not_dropped` in `src/sandbox.rs`.
+
+## Adapters
+
+`adapter` is the seam between a profile and how its harness is started (R4): a trait with
+`argv(&Profile)` and the names of the variables the harness needs. A profile's own `command`
+wins; otherwise `adapter::of(harness)` supplies the argv, and a harness with no adapter says so
+by name, before a task exists. Adding an adapter for a harness the core already knows touches
+`adapter` and the contract test, nothing else; a new harness also needs its `Harness` variant.
+
+The launcher appends the brief with `adapter::with_brief`, so "the brief is the last argument"
+is one rule, and it resolves the program once: the check and the run use the same absolute
+path. The environment is the profile's names plus the adapter's, deduplicated, and a profile
+with its own `command` does not get the adapter's names — it is not running the adapter.
+
+`tests/adapter_contract.rs` is the shared contract, run against a stub of the harness on
+`PATH` (through the real CLI) and against a fake adapter written in the test: the program
+resolves, the model and the effort reach the argv, the brief is exactly the last argument,
+stdin is closed so the harness cannot prompt, and the result reaches the handover.
+
+Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
+`at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`,
+`at28_a_harness_without_an_adapter_is_refused_before_a_task`, and the unit tests in
+`src/adapter.rs`.
 
 ## Concurrency
 

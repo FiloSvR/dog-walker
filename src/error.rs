@@ -45,8 +45,6 @@ pub enum ConfigError {
     UnknownProfile { name: String },
     #[error("`{profile}` is the main profile: pass --allow-main to delegate to it")]
     MainProfile { profile: String },
-    #[error("profile `{profile}` has no `command` to run (adapters land in #10)")]
-    NoCommand { profile: String },
 }
 
 /// Why a task could not change status.
@@ -85,6 +83,8 @@ pub enum HandoverError {
 /// Why the harness could not be started or waited for.
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchError {
+    #[error(transparent)]
+    Adapter(#[from] AdapterError),
     #[error("cannot install the signal handlers: {source}")]
     Signal { source: io::Error },
     #[error("the timeout {timeout:?} does not fit a deadline")]
@@ -93,8 +93,6 @@ pub enum LaunchError {
     Task(#[from] TaskError),
     #[error(transparent)]
     Sandbox(#[from] SandboxError),
-    #[error("profile `{profile}` has no `command` to run")]
-    NoCommand { profile: String },
     #[error("cannot use the log {}: {source}", path.display())]
     Log { path: PathBuf, source: io::Error },
     #[error("cannot start the harness `{}`: {source}", program.to_string_lossy())]
@@ -119,20 +117,35 @@ pub enum OverrideError {
     Git { origin: String, value: String },
 }
 
+/// Why a harness could not be started: no command, and no adapter for it yet.
+#[derive(Debug, thiserror::Error)]
+pub enum AdapterError {
+    #[error(
+        "profile `{profile}` has no `command`, and the `{harness}` adapter is not written yet; \
+         set one, or follow the issue for that harness"
+    )]
+    Missing {
+        profile: String,
+        harness: crate::config::Harness,
+    },
+    #[error("the adapter for `{harness}` returned no argv at all")]
+    Empty { harness: crate::config::Harness },
+}
+
 /// Why the sandbox could not be set up.
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxError {
+    #[error(transparent)]
+    Adapter(#[from] AdapterError),
     #[error(
         "bwrap is not installed: install bubblewrap, or pass --unsandboxed to run without a sandbox"
     )]
     NoTool,
-    #[error("profile `{profile}` has no `command` to sandbox")]
-    NoCommand { profile: String },
     #[error("cannot resolve the harness `{program}`: {source}")]
     Program { program: String, source: io::Error },
     #[error("cannot mount {}: {source}", path.display())]
     Dir { path: PathBuf, source: io::Error },
-    #[error("`{name}` is listed in the profile's `env` and is not set")]
+    #[error("`{name}` is in the policy's environment and is not set")]
     MissingEnv { name: String },
     #[error("bwrap cannot create a sandbox here: {reason}; pass --unsandboxed to run without one")]
     NoSandbox { reason: String },
@@ -201,6 +214,8 @@ pub enum Error {
     Task(#[from] TaskError),
     #[error(transparent)]
     Sandbox(#[from] SandboxError),
+    #[error(transparent)]
+    Adapter(#[from] AdapterError),
     #[error(transparent)]
     Slot(#[from] SlotError),
     #[error(transparent)]

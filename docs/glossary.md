@@ -50,3 +50,8 @@ _Avoid_: Lock, permit, token
 The wait a task's runner does while the limit for its harness and model is reached: it has a
 task folder and the status `created`, and it can be cancelled before it starts.
 _Avoid_: Pool, batch, backlog
+
+**Adapter**:
+The module that knows how one harness is started: the argv that runs it with a profile's model
+and effort, and the variables it reads. A profile's own `command` wins over it.
+_Avoid_: Driver, plugin, integration

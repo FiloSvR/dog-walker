@@ -18,6 +18,9 @@ State, in plain words, what the secondary needs and nothing else:
     dog-walker run <profile> --file brief.md
     dog-walker run <profile> -              # the brief on stdin
 
+A profile sets a `command` to say exactly what to run; without one, its harness's adapter
+builds the command line (Claude Code today; the other harnesses still need `command`).
+
 `dog-walker profiles` lists the profiles, the main one first. `run` blocks until the task
 ends. It prints the path of the handover on stdout and logs on stderr. Running the main
 profile itself needs `--allow-main`.

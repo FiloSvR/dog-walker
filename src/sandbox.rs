@@ -71,7 +71,8 @@ impl Policy {
             git_writable: profile.git_writable,
             read_only_dirs,
             writable_dirs,
-            env: profile.env.clone(),
+            // The profile's names and the ones its adapter needs.
+            env: crate::adapter::env(profile),
             secrets: profile.secrets.clone(),
         })
     }
@@ -488,15 +489,12 @@ impl Plan {
     /// Checks what can be checked before a task exists: the harness program resolves and is
     /// executable, and, when sandboxed, the variables the profile lists are set.
     pub fn check(&self, profile: &Profile, project: &Path) -> Result<(), SandboxError> {
-        let argv = profile
-            .command
-            .as_ref()
-            .ok_or_else(|| SandboxError::NoCommand {
-                profile: profile.name.to_string(),
-            })?;
-        let (program, _) = argv.split_first().ok_or_else(|| SandboxError::NoCommand {
-            profile: profile.name.to_string(),
-        })?;
+        let argv = crate::adapter::argv(profile)?;
+        let Some((program, _)) = argv.split_first() else {
+            return Err(SandboxError::Adapter(crate::error::AdapterError::Empty {
+                harness: profile.harness,
+            }));
+        };
         resolve_program(program, project)?;
         if self.sandboxed {
             self.env()?;
@@ -514,34 +512,32 @@ impl Plan {
         extra: &[(OsString, OsString)],
         handover: &Path,
     ) -> Result<Command, SandboxError> {
-        let argv = profile
-            .command
-            .as_ref()
-            .ok_or_else(|| SandboxError::NoCommand {
-                profile: profile.name.to_string(),
-            })?;
-        let (program, arguments) = argv.split_first().ok_or_else(|| SandboxError::NoCommand {
-            profile: profile.name.to_string(),
-        })?;
+        let argv = crate::adapter::with_brief(&crate::adapter::argv(profile)?, prompt);
+        let Some((program, arguments)) = argv.split_first() else {
+            return Err(SandboxError::Adapter(crate::error::AdapterError::Empty {
+                harness: profile.harness,
+            }));
+        };
+        // The program the check resolved is the program that runs, sandboxed or not.
+        let program = resolve_program(program, project)?;
         if !self.sandboxed {
-            let mut command = Command::new(program);
+            let mut command = Command::new(&program);
             // An inherited `DOG_WALKER_EFFORT` must not survive a profile without one; the
             // task's own variables are applied after, so this cannot remove its value.
             command.env_remove(crate::launch::EFFORT);
-            command.args(arguments).arg(prompt);
+            command.args(arguments);
             for (name, value) in extra {
                 command.env(name, value);
             }
             return Ok(command);
         }
-        let program = resolve_program(program, project)?;
         let bwrap = self.bwrap.as_ref().ok_or(SandboxError::NoTool)?;
         // No environment of the runner's: with a PID namespace of its own, bwrap is PID 1 and
         // the harness could read `/proc/1/environ`.
         let mut command = Command::new(bwrap);
         command.env_clear();
         self.sandbox_args(&mut command, project, &program, extra, handover)?;
-        command.arg(&program).args(arguments).arg(prompt);
+        command.arg(&program).args(arguments);
         Ok(command)
     }
 
@@ -662,7 +658,8 @@ fn above_the_project(policy: &Policy, project: &Path) -> Result<(), SandboxError
 
 /// Whether bwrap runs and can make a sandbox here.
 fn resolve_bwrap(project: &Path) -> Result<PathBuf, SandboxError> {
-    let bwrap = resolve_program("bwrap", project).map_err(|_| SandboxError::NoTool)?;
+    let bwrap = resolve_program(std::ffi::OsStr::new("bwrap"), project)
+        .map_err(|_| SandboxError::NoTool)?;
     // A bwrap the project can write is not a sandbox: a previous harness could have left it.
     if bwrap.starts_with(project) {
         return Err(SandboxError::BwrapInsideProject { path: bwrap });
@@ -682,28 +679,29 @@ fn resolve_bwrap(project: &Path) -> Result<PathBuf, SandboxError> {
 
 /// The program as an absolute, executable path: a bare name is looked up on `PATH`, a name
 /// with a separator in it is a path, relative to the project the harness runs in.
-fn resolve_program(program: &str, project: &Path) -> Result<PathBuf, SandboxError> {
+fn resolve_program(program: &std::ffi::OsStr, project: &Path) -> Result<PathBuf, SandboxError> {
     let path = Path::new(program);
+    let name = program.to_string_lossy().into_owned();
     let found = if path.is_absolute() {
         Some(path.to_owned())
-    } else if program.contains('/') {
+    } else if name.contains('/') {
         Some(project.join(path))
     } else {
         env::split_paths(&env::var_os("PATH").unwrap_or_default())
-            .map(|dir| dir.join(program))
+            .map(|dir| dir.join(path))
             .find(|candidate| is_executable(candidate))
     };
     let found = found.ok_or_else(|| SandboxError::Program {
-        program: program.to_owned(),
+        program: name.clone(),
         source: io::Error::new(io::ErrorKind::NotFound, "no such program"),
     })?;
     let found = fs::canonicalize(&found).map_err(|source| SandboxError::Program {
-        program: program.to_owned(),
+        program: name.clone(),
         source,
     })?;
     if !is_executable(&found) {
         return Err(SandboxError::Program {
-            program: program.to_owned(),
+            program: name,
             source: io::Error::new(io::ErrorKind::PermissionDenied, "not executable"),
         });
     }
@@ -961,7 +959,12 @@ mod tests {
         let command = plan
             .command(&profile, &project, "the brief", &[], Path::new("/none"))
             .unwrap();
-        assert_eq!(command.get_program(), "/bin/echo");
+        // The program is the resolved one: /bin/echo is a link to the shell's echo.
+        assert!(
+            command.get_program().to_string_lossy().ends_with("/echo"),
+            "{:?}",
+            command.get_program()
+        );
         let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
         assert_eq!(args, ["the brief"]);
     }
@@ -1004,10 +1007,10 @@ mod tests {
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         let _plan = Plan::new(&profile, &project, true).unwrap();
         assert_eq!(
-            resolve_program("./run.sh", &project).unwrap(),
+            resolve_program(std::ffi::OsStr::new("./run.sh"), &project).unwrap(),
             fs::canonicalize(&script).unwrap()
         );
-        assert!(resolve_program("no-such-program-xyz", &project).is_err());
+        assert!(resolve_program(std::ffi::OsStr::new("no-such-program-xyz"), &project).is_err());
         fs::remove_dir_all(&project).unwrap();
     }
 

@@ -1,6 +1,7 @@
 //! Starting a secondary harness, waiting for it, and ending it on time or on request (R5, R14).
 //!
-//! The harness is the profile's `command`: an argv list that dog-walker appends the brief to.
+//! The harness is the profile's `command` or its adapter's argv: a list dog-walker appends the
+//! brief to.
 //! The task folder, the handover path, the result path, the profile, the model and the effort
 //! reach it in the environment, so an adapter's command line and an argv list a user writes
 //! both work without anything being spliced into a shell string.
@@ -75,11 +76,9 @@ pub fn launch(
 ) -> Result<End, LaunchError> {
     // The folder must still be the one that was created before anything is written in it.
     task.verify()?;
-    if profile.command.as_ref().is_none_or(Vec::is_empty) {
-        return Err(LaunchError::NoCommand {
-            profile: profile.name.to_string(),
-        });
-    }
+    // The argv comes from the profile's command or its adapter; a harness without either
+    // fails here, before a log exists.
+    crate::adapter::argv(profile)?;
     let log = File::create_new(task.log_path()).map_err(|source| LaunchError::Log {
         path: task.log_path(),
         source,
@@ -467,9 +466,9 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
-    // Without a command there is nothing to start.
+    // Without a command and without an adapter there is nothing to start.
     #[test]
-    fn a_profile_without_a_command_is_an_error() {
+    fn a_profile_without_a_command_or_adapter_is_an_error() {
         let root = project("no-command");
         let task = Task::create(&root, "a brief").unwrap();
         let profile = profile(Vec::new());
@@ -482,7 +481,7 @@ mod tests {
             &plan(&profile),
         )
         .unwrap_err();
-        assert!(matches!(error, LaunchError::NoCommand { .. }), "{error}");
+        assert!(matches!(error, LaunchError::Adapter(_)), "{error}");
         fs::remove_dir_all(&root).unwrap();
     }
 
