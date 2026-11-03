@@ -41,6 +41,18 @@ From the repo root (a git repository; `.dog-walker/` is ignored):
 | `01-readonly-review` | the happy path: a `done` task, a result in the handover, no source changed |
 | `02-sandbox-probe` | the sandbox from inside: project writes work, outside writes, `git commit` and a secret do not leak |
 | `03-no-result-path` | a brief that never names the result file ends `failed`, with the log kept |
+| `04-review-worker-diff` | the full loop: a `reviewer` reviews a `worker`'s uncommitted change from its handover |
 
 If a test fails before the model answers, the cause is usually setup: `harness.log` says
 which (a missing install directory, `Connection error.` for a missing CA store or key).
+
+## The full loop (test 04)
+
+1. Delegate a small change to `worker` with a brief of your own (a tight one: files it may touch,
+   no commit). Note the task folder `run` prints, and check `git diff`.
+2. Fill in the review brief and run it on `reviewer`:
+
+       sed "s|@HANDOVER@|<path/to/worker/task>/handover.md|" manual-tests/briefs/04-review-worker-diff.md > /tmp/review.md
+       dog-walker run reviewer --file /tmp/review.md
+
+3. Read the verdict, then decide yourself: the reviewer only reports, and nothing is committed.
