@@ -2,7 +2,8 @@
 //!
 //! A profile that sets `command` runs exactly that argv; a profile that does not asks its
 //! harness's adapter. An adapter for a harness the core knows touches this module and nothing
-//! else: the launcher and the sandbox only ever see an argv and a list of variable names.
+//! else: the launcher and the sandbox only ever see an argv and a list of variable names. (A
+//! harness that boots a profile of its own, like dsh, also adds a validated profile key.)
 
 use std::ffi::OsString;
 
@@ -123,17 +124,47 @@ impl Adapter for Codex {
     }
 }
 
-/// The adapter for a harness, when one is written.
-pub fn of(harness: Harness) -> Option<&'static dyn Adapter> {
+/// dsh, run unattended: `dsh --profile <dsh_profile> -- -- <brief>`.
+///
+/// dsh boots one of the user's profiles, and `headless` is the shipped one that answers a task
+/// and exits; the model and the tools live in that profile, not in an argv flag, which is what
+/// `dsh_profile` names. The launcher takes the first `--`, so the app gets a second one.
+pub struct Dsh;
+
+impl Adapter for Dsh {
+    fn argv(&self, profile: &Profile) -> Vec<OsString> {
+        let name = profile
+            .dsh_profile
+            .as_ref()
+            .map_or("headless", |name| name.as_str());
+        // dsh's launcher consumes the first `--` itself, so the app needs a second one to see
+        // a brief that starts with a dash as a brief.
+        vec![
+            "dsh".into(),
+            "--profile".into(),
+            name.into(),
+            "--".into(),
+            "--".into(),
+        ]
+    }
+
+    fn env(&self) -> &'static [&'static str] {
+        // dsh finds `$DSH_HOME` (or `$HOME/.dsh`) through the home directory.
+        &["HOME"]
+    }
+}
+
+/// The adapter of a harness: every harness the core knows has one.
+pub fn of(harness: Harness) -> &'static dyn Adapter {
     static CLAUDE: ClaudeCode = ClaudeCode;
     static PI: Pi = Pi;
     static CODEX: Codex = Codex;
+    static DSH: Dsh = Dsh;
     match harness {
-        Harness::Claude => Some(&CLAUDE),
-        Harness::Pi => Some(&PI),
-        Harness::Codex => Some(&CODEX),
-        // dsh is its own issue; until then a profile names `command`.
-        Harness::Dsh => None,
+        Harness::Claude => &CLAUDE,
+        Harness::Pi => &PI,
+        Harness::Codex => &CODEX,
+        Harness::Dsh => &DSH,
     }
 }
 
@@ -146,12 +177,7 @@ pub fn argv(profile: &Profile) -> Result<Vec<OsString>, AdapterError> {
     {
         return Ok(command.iter().map(OsString::from).collect());
     }
-    let missing = || AdapterError::Missing {
-        profile: profile.name.to_string(),
-        harness: profile.harness,
-    };
-    let adapter = of(profile.harness).ok_or_else(missing)?;
-    let argv = adapter.argv(profile);
+    let argv = of(profile.harness).argv(profile);
     if argv.is_empty() {
         return Err(AdapterError::Empty {
             harness: profile.harness,
@@ -175,14 +201,10 @@ pub fn env(profile: &Profile) -> Vec<String> {
         Vec::new()
     } else {
         of(profile.harness)
-            .map(|adapter| {
-                adapter
-                    .env()
-                    .iter()
-                    .map(|name| (*name).to_owned())
-                    .collect()
-            })
-            .unwrap_or_default()
+            .env()
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect()
     };
     for name in &profile.env {
         if !names.contains(name) {
@@ -206,6 +228,7 @@ mod tests {
             effort: None,
             timeout: None,
             command: None,
+            dsh_profile: None,
             main: false,
             network: true,
             git_writable: false,
@@ -327,10 +350,31 @@ mod tests {
     }
 
     #[test]
-    fn a_harness_without_an_adapter_is_named() {
-        let error = argv(&profile(Harness::Dsh, "deepseek")).unwrap_err();
-        assert!(error.to_string().contains("`dsh`"), "{error}");
-        assert!(error.to_string().contains("not written yet"), "{error}");
+    fn dsh_boots_its_profile_and_keeps_the_brief_positional() {
+        let mut dsh = profile(Harness::Dsh, "deepseek");
+        dsh.dsh_profile = Some(ProfileName::parse("rescue").unwrap());
+        let printed: Vec<String> = argv(&dsh)
+            .unwrap()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            printed,
+            ["dsh", "--profile", "rescue", "--", "--"],
+            "{printed:?}"
+        );
+        assert_eq!(env(&dsh), ["HOME"]);
+        let full = with_brief(&argv(&dsh).unwrap(), "- fix it");
+        assert_eq!(
+            full.last().map(|arg| arg.to_string_lossy().into_owned()),
+            Some("- fix it".to_owned())
+        );
+        // Without the key, the shipped one-task profile is the default.
+        let bare = profile(Harness::Dsh, "deepseek");
+        assert_eq!(
+            argv(&bare).unwrap(),
+            ["dsh", "--profile", "headless", "--", "--"]
+        );
     }
 
     #[test]

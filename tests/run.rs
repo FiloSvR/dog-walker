@@ -783,33 +783,6 @@ fn at16_a_harness_that_cannot_start_is_a_config_error() {
     assert!(!fixture.tasks().exists(), "no task folder");
 }
 
-// R1: a profile with no `command` cannot run yet, and the error says so before a task starts.
-#[test]
-fn a_profile_without_a_command_or_adapter_is_a_usage_error() {
-    let fixture = Fixture::new("no-command", "result");
-    let config = fixture.dir.path().join("no-command.toml");
-    fs::write(
-        &config,
-        "[profiles.zeta]\nharness = \"claude\"\nmodel = \"m\"\nmain = true\n\n\
-         [profiles.beta]\nharness = \"dsh\"\nmodel = \"m\"\n",
-    )
-    .unwrap();
-    let out = binary()
-        .arg("--config")
-        .arg(&config)
-        .args(["run", "beta", "Do the thing."])
-        .current_dir(&fixture.project)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
-    let err = stderr(&out);
-    assert!(
-        err.contains("`dsh`") && err.contains("not written yet") && err.contains("command"),
-        "{err}"
-    );
-    assert!(!fixture.tasks().exists());
-}
-
 // AT24 (R19): a run needs no network: it works in a network-less namespace. The inner run is
 // `--unsandboxed` because a sandbox cannot nest user namespaces; the outer bwrap is the
 // network-less sandbox here, and the point is that dog-walker itself needs no network.

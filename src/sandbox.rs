@@ -777,6 +777,7 @@ mod tests {
             effort: None,
             timeout: None,
             command: Some(vec!["/bin/echo".to_owned()]),
+            dsh_profile: None,
             main: false,
             network: true,
             git_writable: false,

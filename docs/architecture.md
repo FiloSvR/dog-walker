@@ -81,8 +81,8 @@ tree, which a harness cannot clear from its own environment (R8). The task that 
 on. Inside the sandbox the harness has a PID namespace of its own, so the ancestry is not
 visible there and only the marker holds; a harness that clears the variable and can reach a
 dog-walker binary can still delegate (D12). A profile's `command` is the argv to run; without
-one, its harness's adapter builds the argv (R4), and a harness whose adapter is not written yet
-names the profile and says so before a task exists. Inside the sandbox the
+one, its harness's adapter builds the argv (R4), and a harness program that cannot be resolved
+is refused before a task exists. Inside the sandbox the
 environment is cleared and rebuilt from the policy's names (the profile's `env` and its
 adapter's) plus `PATH`; without the sandbox it is inherited, and the handover says so. A profile can also name the variables whose
 values are secrets (`secrets`): those values are replaced with `[redacted]` in the handover and
@@ -162,9 +162,11 @@ refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit 
 
 `adapter` is the seam between a profile and how its harness is started (R4): a trait with
 `argv(&Profile)` and the names of the variables the harness needs. A profile's own `command`
-wins; otherwise `adapter::of(harness)` supplies the argv, and a harness with no adapter says so
-by name, before a task exists. Adding an adapter for a harness the core already knows touches
-`adapter` and the contract test, nothing else; a new harness also needs its `Harness` variant.
+wins; otherwise `adapter::of(harness)` supplies the argv — every harness the core knows has
+one — a profile that names a harness the core does not know is refused by the config, and a
+harness program that does not resolve is refused before a task exists. Adding an adapter for a harness the core already knows touches
+`adapter` and the contract test, nothing else; a new harness also needs its `Harness` variant,
+and a harness that boots a profile of its own (dsh) adds a validated key beside `command`.
 
 The launcher appends the brief with `adapter::with_brief`, so "the brief is the last argument"
 is one rule, and it resolves the program once: the check and the run use the same absolute
@@ -173,18 +175,24 @@ with its own `command` does not get the adapter's names — it is not running th
 
 `tests/adapter_contract.rs` is the shared contract, run against a stub of the harness on
 `PATH` (through the real CLI) and against a fake adapter written in the test: the program
-resolves, the model and the effort reach the argv, the brief is exactly the last argument,
-stdin is closed so the harness cannot prompt, and the result reaches the handover.
+resolves, the model and the effort reach the argv (or, for dsh, the dsh profile it names), the
+brief is exactly the last argument, stdin is closed so the harness cannot prompt, and the
+result reaches the handover.
 
-The adapters today are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`),
-Pi (`pi -p --no-session --model … [--thinking …] --`) and Codex (`codex exec
+The adapters are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`),
+Pi (`pi -p --no-session --model … [--thinking …] --`), Codex (`codex exec
 --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --ephemeral -m … [-c
-model_reasoning_effort="…"] --`); dsh is its own issue, and until then a profile for it names
-`command`. Each skip is the harness's documented mode for an externally sandboxed environment,
+model_reasoning_effort="…"] --`) and dsh (`dsh --profile <dsh_profile> -- --`, since dsh's launcher consumes one `--`). dsh boots one of the user's
+composed profiles, and the model lives in that profile rather than in an argv flag, so its
+profile names one with `dsh_profile` (`"headless"` is the shipped one-task profile, and the
+default when the key is absent); the key is refused on any other harness. Each skip is the harness's documented mode for an externally sandboxed environment,
 which bwrap is (D2). Each harness's own directory is the profile's to list and its variables
 to name: Pi and Codex need their install directory read-only, `HOME` (the adapter declares it)
 and a writable configuration directory (`~/.codex`, or a dedicated `CODEX_HOME` in `env` —
-`--ephemeral` keeps session files out of it, but Codex still writes its state there). A Pi profile lists Pi's install directory
+`--ephemeral` keeps session files out of it, but Codex still writes its state there); dsh needs
+its install directory and a writable `DSH_HOME` (in `env`, with the directory in
+`writable_dirs`), and its spill root must point into a writable directory rather than `/tmp`,
+which the sandbox does not mount. A Pi profile lists Pi's install directory
 (`<agent>/install`, not the whole `<agent>`, which holds `auth.json` and past sessions) in
 `read_only_dirs`, and its provider key in `env`; the adapter declares `HOME`, since Pi finds
 the directory through it. `--no-session` stops Pi making a session there, and with a read-only
@@ -193,9 +201,8 @@ its defaults: a profile that needs those settings gives Pi a writable agent dire
 
 Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
 `at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`, `at28_the_pi_adapter_meets_the_contract`,
-`at28_the_codex_adapter_meets_the_contract`,
-`at28_a_harness_without_an_adapter_is_refused_before_a_task`, and the unit tests in
-`src/adapter.rs`.
+`at28_the_codex_adapter_meets_the_contract`, `at28_the_dsh_adapter_meets_the_contract`, and the
+unit tests in `src/adapter.rs` and `src/config.rs`.
 
 ## Concurrency
 
