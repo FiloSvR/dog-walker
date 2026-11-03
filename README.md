@@ -94,4 +94,4 @@ real harness and model by hand.
 
 ## License
 
-MIT.
+MIT, see [`LICENSE`](LICENSE).
