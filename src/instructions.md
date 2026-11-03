@@ -5,12 +5,24 @@ harness, which works in a sandbox and leaves a handover document.
 
 ## 1. Write the brief
 
-State, in plain words, what the secondary needs and nothing else:
+The secondary starts with nothing but the brief, and every file it opens costs it tokens. You
+have probably spent tokens on this task already: the brief is where that work is handed over,
+so it does not have to be paid for twice. A brief that only says what to do makes the secondary
+search for where; write down what you know.
 
 - **Goal**: what to achieve and why.
-- **Context**: what it must know that it cannot find in the repository.
+- **Where to look**: the files and lines that matter (`src/sandbox.rs`, `Policy::checked`), and
+  what you found there, as a fact it can check, not as a hint.
+- **Already settled**: what you ruled out and what you decided, with the reason, so it does not
+  reopen them. Findings, not the story of how you got there.
+- **Skip**: what it should not read or touch, such as the files you checked that do not apply.
+- **How to verify**: the exact command that proves it works, so it does not have to work one out.
 - **Constraints**: what it must not do or touch.
 - **Done when**: a checklist you can verify afterwards.
+
+What the secondary can find with one search is not worth a paragraph; what took you many reads
+to learn is. A short task needs a short brief. If the brief is wrong, the secondary trusts it:
+write only what you have checked.
 
 dog-walker adds one line after your brief, telling the secondary to write its result to
 `$DOG_WALKER_RESULT_PATH`; you do not need to. The handover records your brief as you wrote it.
@@ -101,7 +113,13 @@ Whatever the exit code, stdout holds the handover path when a task was started.
 ## 4. Read the handover
 
 Each task has its own folder: `.dog-walker/tasks/<id>-<slug>/handover.md`. Its front matter
-holds the status; the brief is what you wrote; the Result section is what the secondary
+holds the status and, when the harness reports it, what the task used (`tokens`, `turns`,
+`cost_usd`: the harness's own numbers, absent when it reports none); the brief is what you wrote; the Result section is what the secondary
 reports: what it did, the files it changed, what is open. Next to it, `result.md` is what the
 secondary wrote and `harness.log` is its raw output, kept even when the run fails. Review the
 changes yourself before you rely on them. The secondary cannot commit; you do.
+Use `tokens` and `cost_usd` to learn what a brief should have said: when a task costs far more
+than its size warrants, read `harness.log` for the files it opened that the brief did not
+mention, and name them next time. Compare like with like (one harness and model); a Claude
+Code total includes the cached input it re-reads on every turn, so its `cost_usd` is the better
+figure there.

@@ -50,3 +50,23 @@ Run after a worker task has left an uncommitted change (the placeholder is the w
   that misdescribes the diff) should be found. In the first run the reviewer caught a tautological
   test (`is_end` is defined as `ENDS.contains`), though it still wrote `APPROVE` above a finding
   that said the test pins nothing: read the findings, not only the verdict line.
+
+## 05a-thin and 05b-rich
+
+- Both end `done` with the same correct answer: the retry is in `launch()` in `src/launch.rs`,
+  at most 5 retries, `POLL` (50 ms) between them. An answer that differs is a failed run; do not
+  count its usage.
+- Repo clean.
+- The handover front matter has `tokens` (and `turns`, `cost_usd` on Pi and Claude Code).
+- The reading, over three runs of each: `05b-rich` should use fewer turns and fewer tokens than
+  `05a-thin`, because the worker does not search. If it does not, the brief did not save what it
+  should: read `harness.log` of the rich runs for the files the worker still opened (the brief
+  said to skip them) and for the reads that were not needed. If the two are equal, the question
+  is too easy for this model; use a larger one. This is a measurement of the brief, not a pass
+  or fail of the tool: the tool's part is that the numbers are there (AT30).
+- A first measurement (2026-11-03, Pi, `openrouter/z-ai/glm-5.3-flash`, three runs each; all six
+  answers correct): `05a-thin` used 18206, 25275 and 16290 tokens in 7, 8 and 5 turns; `05b-rich`
+  used 14141, 14525 and 11906 tokens in 4, 4 and 4 turns. Medians: 18206 against 14141 tokens
+  (22% fewer) and 7 against 4 turns. A task that only answers "ok" costs about 5000 tokens on this
+  profile (the harness's own prompt and tools), so most of the saving is in the exploration,
+  which is the part a brief can remove.

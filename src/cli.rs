@@ -21,6 +21,7 @@ use crate::sandbox::{self, Plan, Policy, Request};
 use crate::slots;
 use crate::status::Status;
 use crate::task::{Task, TaskId};
+use crate::usage::Usage;
 
 const INSTRUCTIONS: &str = include_str!("instructions.md");
 
@@ -358,17 +359,32 @@ fn run_task(
         Ok(End::Cancelled) => (Status::Cancelled, "The task was cancelled.".to_owned()),
         Err(error) => (Status::Failed, format!("The task failed: {error}.")),
     };
+    let usage = usage_of(profile, &task);
+    handover.record_usage(usage);
     handover.end(status, &sandbox::redact(&outcome, &secrets))?;
     save(&handover, &task)?;
     // Only now that the end state is on disk: a cancel that arrives later reads it and backs
     // off, and one that arrived earlier finds nothing to do.
     let _ = fs::remove_file(task.directory().join(launch::CANCEL_FILE));
-    log(stderr, &format!("dog-walker: task {} {status}", task.id()));
+    log(stderr, &ended_line(&task, status, usage));
     Ok(if status == Status::Done {
         exit::SUCCESS
     } else {
         exit::TASK_NOT_DONE
     })
+}
+
+/// The run's last log line: the end state, and what the harness reported it used.
+fn ended_line(task: &Task, status: Status, usage: Option<Usage>) -> String {
+    let spent = usage.map_or_else(String::new, |usage| format!(" ({})", usage.summary()));
+    format!("dog-walker: task {} {status}{spent}", task.id())
+}
+
+/// What the task's harness reported it used. The log was redacted when the run ended, so what
+/// is read from it holds no secret.
+fn usage_of(profile: &Profile, task: &Task) -> Option<Usage> {
+    let log = fs::read(task.log_path()).ok()?;
+    adapter::usage(profile, &String::from_utf8_lossy(&log))
 }
 
 /// Takes the run's slot; `None` when the wait was cut short, and then the task is ended as
