@@ -77,12 +77,14 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    merging the lists, which would let a repository grant itself access to the machine.
    Discussion: issue #6.
 
-12. **The delegation guard is cooperative, and the ancestry check is what makes it hold**
+12. **The delegation guard is a marker and, outside the sandbox, an ancestry check**
     (D12, 2026-11-03). A `run` refuses when `DOG_WALKER_TASK_DIR` names an existing directory or
     when an ancestor process is a dog-walker. The variable is what a harness can clear, so on
-    its own it is a reminder, not a barrier; the ancestry is outside the harness's control, but
-    a harness that detaches into its own session and clears the variable can still delegate.
-    Rejected: a harder mechanism (a secret fd, a lock held by the runner) that a harness can
-    also drop, at the cost of a second channel to keep in sync. The requirement is read as "a
-    secondary is not a delegator by default", and the guard is what a well-behaved harness and
-    a wrapper meet. Discussion: issue #9.
+    its own it is a reminder, not a barrier; the ancestry is outside the harness's control,
+    but the sandbox gives the harness a PID namespace of its own, where the outer runner is
+    not visible, so inside the sandbox only the marker holds. A harness that clears the
+    variable and can reach a dog-walker binary (its own repo's `target/`, a system-wide
+    install) can therefore still delegate. Rejected: a harder mechanism (a secret fd, a
+    sentinel the runner binds read-only), which also needs a channel the harness can drop.
+    R8 is read as "a secondary is not a delegator by default", and this guard is what a
+    well-behaved harness and a wrapper meet. Discussion: issue #9.

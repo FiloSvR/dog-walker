@@ -73,8 +73,9 @@ It reads, from the environment:
 environment carries it (and the directory it names exists) refuses before it reads a brief or
 creates a folder, and so does a `run` with a dog-walker somewhere above it in the process
 tree, which a harness cannot clear from its own environment (R8). The task that called it goes
-on. A harness that both clears the variable and leaves the process tree can still delegate:
-the marker is cooperative, the ancestry is not (D12). Adapters (#10) will build
+on. Inside the sandbox the harness has a PID namespace of its own, so the ancestry is not
+visible there and only the marker holds; a harness that clears the variable and can reach a
+dog-walker binary can still delegate (D12). Adapters (#10) will build
 that command line from the profile; until then a profile needs a `command` to run, and `run`
 says so before it creates a task. Inside the sandbox the
 environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the

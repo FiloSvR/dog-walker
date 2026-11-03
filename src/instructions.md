@@ -29,8 +29,8 @@ profile can cut the network (`network = false`) and make `.git` writable
 the handover says so.
 
 A task should not start tasks of its own: a `run` called from inside one is refused by the
-marker it gets, or by the dog-walker above it in the process tree, and the task that called it
-is unaffected.
+marker it gets (and, outside the sandbox, by the dog-walker above it in the process tree), and
+the task that called it is unaffected.
 
 A repository can tighten the policy in `.dog-walker/config.toml` (the same keys: `network`,
 `git`, `read_only_dirs`, `writable_dirs`, `env`), and a task can tighten `network` and `git`

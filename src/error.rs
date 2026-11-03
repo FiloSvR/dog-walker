@@ -157,8 +157,8 @@ pub enum CliError {
     #[error("cannot read the task from stdin: {source}")]
     Stdin { source: io::Error },
     #[error(
-        "a task cannot start tasks: `run` was called from inside one (`{variable}` is set); \
-         run it from your own shell"
+        "a task cannot start tasks: this run is inside one (`{variable}` names a task, or a \
+         dog-walker is above it in the process tree); run it from your own shell"
     )]
     Nested { variable: &'static str },
     #[error("cannot find the project directory: {source}")]
