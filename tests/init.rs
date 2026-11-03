@@ -474,6 +474,30 @@ fn at31_the_questions_can_be_answered_on_stdin() {
     assert!(!config.contains("OPENROUTER_API_KEY"), "{config}");
 }
 
+// AT31 (R25): a secret typed where a variable name is asked is refused and not printed back.
+#[test]
+fn at31_a_secret_typed_as_a_variable_name_is_not_echoed() {
+    let home = Home::new("echo");
+    home.all_harnesses();
+    // main: harness, model; worker: harness, model, credential (a key, then the default);
+    // reviewer: no; confirm.
+    let answers = "claude\n\npi\n\nsk-or-v1-TYPED-BY-MISTAKE\n\nno\ny\n";
+    let out = home.init(&[], answers);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("not a variable name"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        !stderr(&out).contains("TYPED-BY-MISTAKE"),
+        "{}",
+        stderr(&out)
+    );
+    let written = fs::read_to_string(home.config()).unwrap();
+    assert!(!written.contains("TYPED-BY-MISTAKE"), "{written}");
+}
+
 // AT31 (R25): without a yes, nothing is written.
 #[test]
 fn at31_nothing_is_written_without_a_yes() {
