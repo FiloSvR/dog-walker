@@ -124,14 +124,21 @@ follow what the mount would do: a read-only directory can be added inside the pr
 writable directory (it takes write access away) but not elsewhere (it would be more to read),
 and one that protects the project or a writable directory cannot be dropped. Anything else is
 rejected, naming the field and who asked. The project file must be a regular file inside the
-project: a symlink out of it is refused, not read. The effective policy is what the sandbox is built from
+project: a symlink is refused, not followed, and a FIFO is refused without a read. The effective policy is what the sandbox is built from
 (`Plan::from_policy`) and what the handover records; with `--unsandboxed` the record says the
 policy is not enforced, because it is not.
 
-Checks: `at4_a_project_config_can_tighten`, `at4_a_project_config_that_loosens_is_named`,
-`at4_a_project_config_cannot_add_a_directory`, `at4_a_malformed_project_config_is_named`,
-`at4_a_task_request_may_only_tighten`, and `a_request_may_tighten_and_is_named_when_it_loosens`
-in `src/sandbox.rs`.
+Checks: `at4_a_project_config_can_tighten` (a host listener is unreachable in the tightened
+run), `at4_a_project_config_that_loosens_is_named`, `at4_a_project_config_cannot_add_a_directory`,
+`at4_a_project_config_cannot_drop_a_protecting_directory`,
+`at4_a_request_directory_must_exist`, `at4_a_directory_that_cannot_be_shown_is_refused`,
+`at4_a_symlinked_project_config_is_refused`, `at4_a_symlinked_project_config_directory_is_refused`,
+`at4_a_fifo_project_config_is_refused`, `at4_an_unknown_project_key_is_refused`,
+`at4_a_bad_git_mode_names_the_project_config`, `at4_a_malformed_project_config_is_named`,
+`at4_a_task_request_may_only_tighten` (both flags, both directions, and the values the flags
+refuse), `at4_unsandboxed_does_not_mount_the_profile_directories`, and the unit tests
+`a_request_may_tighten_and_is_named_when_it_loosens` and
+`a_read_only_directory_inside_the_project_can_be_added_but_not_dropped` in `src/sandbox.rs`.
 
 ## Stopping a task
 

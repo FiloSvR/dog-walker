@@ -66,8 +66,8 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    must have those directories listed; adapters (#10) can declare them.
    Discussion: issue #4.
 
-9. **A project or a task may only tighten the policy, and adding a directory counts as
-   loosening** (D9, 2026-11-03). The profile is the user's policy; a project's
+9. **A project or a task may only tighten the policy, and a directory is judged by its mount**
+   (D9, 2026-11-03). The profile is the user's policy; a project's
    `.dog-walker/config.toml` and a task's `--network`/`--git` flags are compared field by field
    with it (and a task with the project-tightened policy) and refused when they would widen
    it, naming the field and the origin. A directory is judged by what its mount does: adding a

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -366,16 +367,43 @@ pub fn project_config(project: &Path) -> Result<Option<ProjectConfig>, ConfigErr
     if metadata.file_type().is_symlink() || !metadata.is_file() || !canonical.starts_with(project) {
         return Err(ConfigError::UnsafeProjectConfig { path: canonical });
     }
-    let text = fs::read_to_string(&canonical).map_err(|source| ConfigError::ReadProjectConfig {
+    // Opened without following a link and read through the descriptor, so a swap between
+    // the check and the read cannot point the read somewhere else.
+    let fd = rustix::fs::open(
+        &canonical,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(|source| ConfigError::ReadProjectConfig {
         path: canonical.clone(),
-        source,
+        source: io::Error::from(source),
     })?;
+    let file = fs::File::from(fd);
+    let opened = file
+        .metadata()
+        .map_err(|source| ConfigError::ReadProjectConfig {
+            path: canonical.clone(),
+            source,
+        })?;
+    if !opened.is_file() {
+        return Err(ConfigError::UnsafeProjectConfig { path: canonical });
+    }
+    let mut text = String::new();
+    file.take(MAX_PROJECT_CONFIG)
+        .read_to_string(&mut text)
+        .map_err(|source| ConfigError::ReadProjectConfig {
+            path: canonical.clone(),
+            source,
+        })?;
     let request = toml::from_str(&text).map_err(|source| ConfigError::ProjectConfig {
         path: canonical,
         source,
     })?;
     Ok(Some(ProjectConfig { path, request }))
 }
+
+/// A project's policy file is small; a file larger than this is not one.
+const MAX_PROJECT_CONFIG: u64 = 64 * 1024;
 
 /// A project's policy file: where it is, and what it asks for.
 pub struct ProjectConfig {

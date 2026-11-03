@@ -1603,6 +1603,80 @@ fn at4_a_bad_git_mode_names_the_project_config() {
     );
 }
 
+// AT4 (R3): a project config that is a FIFO is refused without being read.
+#[test]
+fn at4_a_fifo_project_config_is_refused() {
+    let fixture = Fixture::new("at4-fifo", "result");
+    let dir = fixture.project.join(".dog-walker");
+    fs::create_dir_all(&dir).unwrap();
+    let made = Command::new("mkfifo")
+        .arg(dir.join("config.toml"))
+        .output()
+        .unwrap();
+    assert!(made.status.success());
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("not a regular file"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!fixture.tasks().exists());
+}
+
+// AT4 (R3): a project config that is a symlinked directory is refused too.
+#[test]
+fn at4_a_symlinked_project_config_directory_is_refused() {
+    let fixture = Fixture::new("at4-dir-link", "result");
+    let outside = fixture.dir.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("config.toml"), "network = false\n").unwrap();
+    std::os::unix::fs::symlink(&outside, fixture.project.join(".dog-walker")).unwrap();
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(!fixture.tasks().exists());
+}
+
+// AT4 (R3): a directory the request names must exist: the sandbox would fail to mount it
+// after the task folder was made.
+#[test]
+fn at4_a_request_directory_must_exist() {
+    let fixture = Fixture::new("at4-missing-dir", "result");
+    project_config(
+        &fixture,
+        "read_only_dirs = [\"/nonexistent/dog-walker-dir\"]\n",
+    );
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("is not a directory"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!fixture.tasks().exists());
+}
+
+// AT4 (R3): a directory whose canonical name carries a newline is refused, so the handover
+// cannot be forged through a link.
+#[test]
+fn at4_a_directory_that_cannot_be_shown_is_refused() {
+    let fixture = Fixture::new("at4-forge", "result");
+    let evil = fixture.dir.path().join("evil\n- network: on");
+    fs::create_dir_all(&evil).unwrap();
+    std::os::unix::fs::symlink(&evil, fixture.project.join("link")).unwrap();
+    project_config(
+        &fixture,
+        &format!(
+            "read_only_dirs = [\"{}\"]\n",
+            fixture.project.join("link").display()
+        ),
+    );
+    let out = fixture.run(&["run", "alpha", "Do the thing."]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("read_only_dirs"), "{}", stderr(&out));
+    assert!(!fixture.tasks().exists());
+}
+
 // AT4 (R3): a project config that is not TOML is named.
 #[test]
 fn at4_a_malformed_project_config_is_named() {
@@ -1611,6 +1685,7 @@ fn at4_a_malformed_project_config_is_named() {
     let out = fixture.run(&["run", "alpha", "Do the thing."]);
     assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
     assert!(stderr(&out).contains("config.toml"), "{}", stderr(&out));
+    assert!(!fixture.tasks().exists());
 }
 
 // AT4 (R3): a task request may tighten the network, and may not loosen it.
@@ -1636,6 +1711,32 @@ fn at4_a_task_request_may_only_tighten() {
         err.contains("task request") && err.contains("network"),
         "{err}"
     );
+    assert!(!fixture.tasks().exists());
+
+    // The same for `.git`: writable is a loosening, read-only is a tightening.
+    let out = fixture.run(&["run", "alpha", "Do the thing.", "--git", "writable"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("task request") && err.contains("git"), "{err}");
+    assert!(!fixture.tasks().exists());
+
+    let writable = Fixture::with_policy("at4-task-git", "result", "git = \"writable\"");
+    let out = writable.run_sandboxed(&["run", "alpha", "Do the thing.", "--git", "read-only"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        writable.handover().contains("- git: read-only"),
+        "{}",
+        writable.handover()
+    );
+
+    // A value the flag does not know is refused by name, not read as `off`.
+    for (flag, fixture) in [("--network", "at4-task-bad"), ("--git", "at4-task-bad-git")] {
+        let fixture = Fixture::new(fixture, "result");
+        let out = fixture.run(&["run", "alpha", "Do the thing.", flag, "maybe"]);
+        assert_eq!(out.status.code(), Some(2), "{flag}: {}", stderr(&out));
+        assert!(stderr(&out).contains("maybe"), "{flag}: {}", stderr(&out));
+        assert!(!fixture.tasks().exists());
+    }
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.

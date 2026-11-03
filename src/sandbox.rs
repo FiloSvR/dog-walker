@@ -147,18 +147,6 @@ impl Request {
             field,
             detail,
         };
-        if let Some(dir) = self
-            .read_only_dirs
-            .iter()
-            .chain(self.writable_dirs.iter())
-            .flatten()
-            .find(|dir| !is_printable(dir))
-        {
-            return Err(loosens(
-                "read_only_dirs",
-                format!("`{}` cannot be shown", dir.display()),
-            ));
-        }
         if let Some(value) = self.git.as_deref().filter(|value| !printable(value)) {
             return Err(OverrideError::Git {
                 origin: origin.to_owned(),
@@ -191,6 +179,9 @@ impl Request {
         }
         let (read_only_dirs, writable_dirs) = self.dirs(parent, project, origin)?;
         let env = self.env.clone().unwrap_or_else(|| parent.env.clone());
+        if env.iter().any(|name| !printable(name)) {
+            return Err(loosens("env", "a variable name cannot be shown".to_owned()));
+        }
         if let Some(name) = env.iter().find(|name| !parent.env.contains(name)) {
             return Err(loosens(
                 "env",
@@ -214,23 +205,64 @@ impl Request {
         project: &Path,
         origin: &str,
     ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), OverrideError> {
-        let read_only_dirs = match &self.read_only_dirs {
-            Some(dirs) => dirs.iter().map(|dir| resolve_dir(dir)).collect(),
-            None => parent.read_only_dirs.clone(),
-        };
-        let writable_dirs = match &self.writable_dirs {
-            Some(dirs) => dirs.iter().map(|dir| resolve_dir(dir)).collect(),
-            None => parent.writable_dirs.clone(),
-        };
         let loosens = |field: &'static str, detail: String| OverrideError::Loosens {
             origin: origin.to_owned(),
             field,
             detail,
         };
+        // The policy it inherits is canonical when it came from the profile, but as written
+        // when the run is unsandboxed: canonicalise both sides so they compare.
+        let parent_ro: Vec<PathBuf> = parent
+            .read_only_dirs
+            .iter()
+            .map(|dir| canonical(dir))
+            .collect();
+        let parent_writable: Vec<PathBuf> = parent
+            .writable_dirs
+            .iter()
+            .map(|dir| canonical(dir))
+            .collect();
+        let read_only_dirs = match &self.read_only_dirs {
+            Some(dirs) => {
+                let mut paths = Vec::with_capacity(dirs.len());
+                for dir in dirs {
+                    paths.push(
+                        existing_dir(dir).map_err(|detail| loosens("read_only_dirs", detail))?,
+                    );
+                }
+                paths
+            }
+            None => parent_ro.clone(),
+        };
+        let writable_dirs = match &self.writable_dirs {
+            Some(dirs) => {
+                let mut paths = Vec::with_capacity(dirs.len());
+                for dir in dirs {
+                    paths.push(
+                        existing_dir(dir).map_err(|detail| loosens("writable_dirs", detail))?,
+                    );
+                }
+                paths
+            }
+            None => parent_writable.clone(),
+        };
+        // A path the handover cannot show would forge its record.
+        if let Some(dir) = read_only_dirs.iter().find(|dir| !is_printable(dir)) {
+            return Err(loosens(
+                "read_only_dirs",
+                format!("`{}` cannot be shown", dir.display()),
+            ));
+        }
+        if let Some(dir) = writable_dirs.iter().find(|dir| !is_printable(dir)) {
+            return Err(loosens(
+                "writable_dirs",
+                format!("`{}` cannot be shown", dir.display()),
+            ));
+        }
         // A directory can only be added to a writable list as a loosening.
         if let Some(dir) = writable_dirs
             .iter()
-            .find(|dir| !parent.writable_dirs.contains(dir))
+            .find(|dir| !parent_writable.contains(dir))
         {
             return Err(loosens(
                 "writable_dirs",
@@ -247,11 +279,8 @@ impl Request {
                 || writable_dirs
                     .iter()
                     .any(|writable| dir.starts_with(writable))
-                || parent
-                    .read_only_dirs
-                    .iter()
-                    .any(|inherited| dir.starts_with(inherited));
-            !parent.read_only_dirs.contains(dir) && !covered
+                || parent_ro.iter().any(|inherited| dir.starts_with(inherited));
+            !parent_ro.contains(dir) && !covered
         }) {
             return Err(loosens(
                 "read_only_dirs",
@@ -262,7 +291,7 @@ impl Request {
             ));
         }
         // Dropping one gives write access back if it covered the project or a writable dir.
-        if let Some(dir) = parent.read_only_dirs.iter().find(|dir| {
+        if let Some(dir) = parent_ro.iter().find(|dir| {
             !read_only_dirs.contains(dir)
                 && (dir.starts_with(project)
                     || project.starts_with(dir)
@@ -296,10 +325,23 @@ fn printable(text: &str) -> bool {
     text.chars().all(|c| !crate::config::is_unsafe_char(c))
 }
 
-/// A directory in a request, canonical when it exists: the policy it is compared with holds
-/// canonical paths.
-fn resolve_dir(dir: &Path) -> PathBuf {
+/// A directory as it will be mounted, when it can be resolved; the written path otherwise.
+fn canonical(dir: &Path) -> PathBuf {
     fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned())
+}
+
+/// A directory a request names: it must exist and be a directory, since the sandbox would
+/// otherwise fail to mount it after a task folder exists.
+fn existing_dir(dir: &Path) -> Result<PathBuf, String> {
+    if !dir.is_absolute() {
+        return Err(format!("`{}` is not an absolute path", dir.display()));
+    }
+    let canonical =
+        fs::canonicalize(dir).map_err(|_| format!("`{}` is not a directory", dir.display()))?;
+    if !fs::metadata(&canonical).is_ok_and(|metadata| metadata.is_dir()) {
+        return Err(format!("`{}` is not a directory", dir.display()));
+    }
+    Ok(canonical)
 }
 
 /// What a run does about the sandbox.
@@ -749,7 +791,16 @@ mod tests {
 
     #[test]
     fn a_read_only_directory_inside_the_project_can_be_added_but_not_dropped() {
-        let project = Path::new("/work/project");
+        let base = std::env::temp_dir().join(format!(
+            "dog-walker-sandbox-{}-add-drop",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        let project = base.join("project");
+        let protected = project.join("protected");
+        fs::create_dir_all(&protected).unwrap();
+        let project = fs::canonicalize(&project).unwrap();
+        let protected = fs::canonicalize(&protected).unwrap();
         let mut parent = Policy {
             network: true,
             git_writable: false,
@@ -757,22 +808,22 @@ mod tests {
             writable_dirs: Vec::new(),
             env: Vec::new(),
         };
-        let protecting = PathBuf::from("/work/project/protected");
         let add = Request {
-            read_only_dirs: Some(vec![protecting.clone()]),
+            read_only_dirs: Some(vec![protected.clone()]),
             ..Request::default()
         };
-        assert!(add.resolve(&parent, project, "the task").is_ok());
+        assert!(add.resolve(&parent, &project, "the task").is_ok());
         // Once the profile protects it, a request may not take that away.
-        parent.read_only_dirs = vec![protecting];
+        parent.read_only_dirs = vec![protected];
         let drop = Request {
             read_only_dirs: Some(Vec::new()),
             ..Request::default()
         };
         let error = drop
-            .resolve(&parent, project, "the project config")
+            .resolve(&parent, &project, "the project config")
             .unwrap_err();
         assert!(error.to_string().contains("read_only_dirs"), "{error}");
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
