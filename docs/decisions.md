@@ -178,3 +178,32 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     reading each harness's session files (private formats, and not in the sandbox); recording
     zero for an unreported run (it would read as a cheap task). The numbers are the harness's
     own claim: the log is untrusted output, so they are for judging a brief, not for billing.
+
+19. **`init` is an explicit installer that writes names, never values**
+    (D19, 2026-11-03, #70). Setting up a profile by hand failed silently for every harness, and a
+    main harness only follows the brief guidance if something points it at
+    `dog-walker instructions`. `dog-walker init` asks per role (`main` required, `worker` and
+    `reviewer` optional) for a harness and model, finds the install directory from where the
+    program resolves, writes the profile's sandbox part (`docs/setup.md` as code), creates a
+    private directory (700) and an env file (600) with the non-secret lines, and appends a marked
+    block to the main harness's global instructions file. It shows the plan and asks first
+    (`--yes` skips), appends to an existing config and never edits it, and creates a file that
+    exists never. It asks for the name of the credential variable and never reads, copies or
+    writes a value: the token and the Codex login are printed as steps. Only Claude Code
+    (`~/.claude/CLAUDE.md`) and Codex (`~/.codex/AGENTS.md`) have a verified global file; for Pi
+    and dsh the line is printed. Rejected: a silent step on install or on the first `run` (it
+    would write outside the project unasked, against R19's spirit); copying the Codex login
+    (a credential copy the user should choose); re-serialising the config (it would drop the
+    user's comments); a project `AGENTS.md` (the profiles are user-level, so is the line).
+    Hardening from the review of the first version (task 0099): the config is written last, so a
+    run that fails midway records no profile that a second run would skip; a preflight refuses,
+    before anything is written, a config path with a control character (it would end a comment in
+    the env file and run a command when the file is sourced), a non-UTF-8 path (the config would
+    name another one), and a private directory or env file that is not what it should be, is a
+    link, or is open to others; an env file or directory that is right is left as it is; the
+    config and the instructions file are read again just before they are appended to. A link to
+    the instructions file or the config is followed on purpose (a dotfiles repo), and the plan
+    says where it leads; the installer runs as the user on the user's own files, so a link there
+    is the user's. Not done: a lock between two `init` runs at the same time (the second one
+    refuses when it finds the profile there).
+

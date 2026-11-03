@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// The file-writing spellings of `WRITES`, which `handover` may use for its own document
 /// (`handover.rs`), `launch` for rewriting the harness log and the result once a secret is
-/// redacted from them (`launch.rs`), and `task` for the `.gitignore` of the records (`task.rs`). Everything that reaches stdout or stderr stays in the `output` module.
+/// redacted from them (`launch.rs`), and `task` for the `.gitignore` of the records (`task.rs`), and `setup` for the files `init` writes (`setup.rs`). Everything that reaches stdout or stderr stays in the `output` module.
 const FILE_WRITES: [&str; 1] = [".write_all("];
 
 /// Spellings of a write that only the `output` module may use, except for the file writes
@@ -98,6 +98,7 @@ fn only_the_output_module_writes() -> io::Result<()> {
             || is_top_level(&src, &path, "launch.rs")
             || is_top_level(&src, &path, "task.rs")
             || is_top_level(&src, &path, "slots.rs")
+            || is_top_level(&src, &path, "setup.rs")
         {
             found.retain(|pattern| !FILE_WRITES.contains(pattern));
         }

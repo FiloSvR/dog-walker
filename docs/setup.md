@@ -9,13 +9,35 @@ without starting a task or the harness: the directories, the program, the variab
 shell), a write to the temporary directory and a TLS fetch inside the sandbox, with the fix for
 each failure.
 
-## Telling the main harness about dog-walker
+## The quick way: `dog-walker init`
+
+`dog-walker init` does the setup below for you, once:
+
+    dog-walker init
+
+It asks which harness you open yourself (the main profile, required), then, for a `worker` and
+a `reviewer`, which harness and model to use or `no` to skip. It finds each harness's install
+directory, writes the profile, creates a private directory and an env file for it, and adds a
+line to your main harness's global instructions file (`~/.claude/CLAUDE.md` for Claude Code,
+`~/.codex/AGENTS.md` for Codex) so that it reads `dog-walker instructions` before it delegates.
+It shows everything it will write and asks before it writes. Pi and dsh have no verified global
+file, so for those it prints the line for you to add.
+
+It never asks for, reads or writes a secret. What it leaves to you is printed at the end: put
+your key in the env file (or run `claude setup-token`, or copy the Codex login), load the env
+file, and run `dog-walker doctor <profile>`. The same answers can be given as options, for a
+script: `dog-walker init --main claude --worker pi:openrouter/z-ai/glm-5.3-flash --reviewer no
+--yes`. Run again later, it adds only the roles you do not have yet and leaves the rest alone.
+
+The sections below are the same steps by hand, and the reasons for each.
+
+## Telling the main harness about dog-walker by hand
 
 The guidance for the main harness (how to write a brief, run it, read the handover and what a
-task cost) ships in the binary: `dog-walker instructions` prints it. Nothing puts it in the main
-model's context for you, and a model that never reads it writes short briefs from habit. Add one
-line to the file your main harness reads at the start of a session (`AGENTS.md`, `CLAUDE.md` or
-the equivalent):
+task cost) ships in the binary: `dog-walker instructions` prints it. `init` adds the line that
+points the main harness at it; without `init`, nothing puts it in the main model's context, and
+a model that never reads it writes short briefs from habit. Add one line to the file your main
+harness reads at the start of a session (`AGENTS.md`, `CLAUDE.md` or the equivalent):
 
     To delegate work to another harness, run `dog-walker instructions` first and follow it.
 

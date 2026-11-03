@@ -182,6 +182,35 @@ pub enum CliError {
     Cancel { path: PathBuf, source: io::Error },
 }
 
+/// Why `init` could not finish.
+#[derive(Debug, thiserror::Error)]
+pub enum SetupError {
+    #[error(
+        "no answer for \"{question}\": pass the answers as options (see `init --help`) or run it in a terminal"
+    )]
+    NoAnswer { question: String },
+    #[error("the answer for {role} is not usable: {why}")]
+    Answer { role: String, why: String },
+    #[error("cannot read the answer: {source}")]
+    Read { source: io::Error },
+    #[error("cannot write {}: {source}", path.display())]
+    Io { path: PathBuf, source: io::Error },
+    #[error("the existing config {} is not usable: {why}", path.display())]
+    Config { path: PathBuf, why: String },
+    #[error("cannot use the path {}: {why}", path.display())]
+    UnsafePath { path: PathBuf, why: String },
+    #[error("{} {why}", path.display())]
+    Exists { path: PathBuf, why: String },
+    #[error("the config {} changed while you were answering: `{name}` is there now; run init again", path.display())]
+    Changed { path: PathBuf, name: String },
+    #[error("a main profile is required: say which harness you open yourself")]
+    NoMain,
+    #[error("nothing was written: you did not confirm")]
+    Declined,
+    #[error("cannot write output: {0}")]
+    Output(#[from] io::Error),
+}
+
 /// Why a running slot could not be taken.
 #[derive(Debug, thiserror::Error)]
 pub enum SlotError {
@@ -218,4 +247,6 @@ pub enum Error {
     Cli(#[from] CliError),
     #[error(transparent)]
     Launch(#[from] LaunchError),
+    #[error(transparent)]
+    Setup(#[from] SetupError),
 }
