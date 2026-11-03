@@ -81,6 +81,8 @@ pub enum HandoverError {
 /// Why the harness could not be started or waited for.
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchError {
+    #[error(transparent)]
+    Adapter(#[from] AdapterError),
     #[error("cannot install the signal handlers: {source}")]
     Signal { source: io::Error },
     #[error("the timeout {timeout:?} does not fit a deadline")]
@@ -115,9 +117,24 @@ pub enum OverrideError {
     Git { origin: String, value: String },
 }
 
+/// Why a harness could not be started: no command, and no adapter for it yet.
+#[derive(Debug, thiserror::Error)]
+pub enum AdapterError {
+    #[error(
+        "profile `{profile}` has no `command`, and the `{harness}` adapter is not written yet; \
+         set one, or follow the issue for that harness"
+    )]
+    Missing {
+        profile: String,
+        harness: crate::config::Harness,
+    },
+}
+
 /// Why the sandbox could not be set up.
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxError {
+    #[error(transparent)]
+    Adapter(#[from] AdapterError),
     #[error(
         "bwrap is not installed: install bubblewrap, or pass --unsandboxed to run without a sandbox"
     )]
@@ -186,6 +203,8 @@ pub enum Error {
     Task(#[from] TaskError),
     #[error(transparent)]
     Sandbox(#[from] SandboxError),
+    #[error(transparent)]
+    Adapter(#[from] AdapterError),
     #[error(transparent)]
     Override(#[from] OverrideError),
     #[error(transparent)]

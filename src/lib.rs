@@ -4,6 +4,7 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("dog-walker supports Linux only");
 
+pub mod adapter;
 pub mod cli;
 pub mod config;
 pub mod error;

@@ -19,6 +19,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 | `status` | The `Status` type and its transitions (R12) | built (#16) |
 | `launch` | Starting the harness, waiting, and ending its process group (R5, R14) | built (#16, #5) |
 | `sandbox` | The bwrap command, the profile's policy, and what the handover records (R15-R17, R20) | built (#4) |
+| `adapter` | The seam between a profile and its harness's argv (R4) | built (#10) |
 
 Invariants, each with the test that checks it:
 
@@ -77,9 +78,9 @@ creates a folder, and so does a `run` with a dog-walker somewhere above it in th
 tree, which a harness cannot clear from its own environment (R8). The task that called it goes
 on. Inside the sandbox the harness has a PID namespace of its own, so the ancestry is not
 visible there and only the marker holds; a harness that clears the variable and can reach a
-dog-walker binary can still delegate (D12). Adapters (#10) will build
-that command line from the profile; until then a profile needs a `command` to run, and `run`
-says so before it creates a task. Inside the sandbox the
+dog-walker binary can still delegate (D12). A profile's `command` is the argv to run; without
+one, its harness's adapter builds the argv (R4), and a harness whose adapter is not written yet
+names the profile and says so before a task exists. Inside the sandbox the
 environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the
 sandbox it is inherited, and the handover says so. A profile can also name the variables whose
 values are secrets (`secrets`): those values are replaced with `[redacted]` in the handover and

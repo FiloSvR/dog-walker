@@ -98,3 +98,13 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     sentinel the runner binds read-only), which also needs a channel the harness can drop.
     R8 is read as "a secondary is not a delegator by default", and this guard is what a
     well-behaved harness and a wrapper meet. Discussion: issue #9.
+
+13. **An adapter is an argv builder behind one trait, and a profile's own command wins**
+    (D13, 2026-11-03). `adapter` builds the harness's argv from the profile (the program, the
+    model, the flags that make the harness unattended) and declares the variables it needs by
+    name; the launcher appends the brief as the last argument, whatever the adapter, and closes
+    stdin. A profile with a `command` keeps working: it is the escape hatch, what the tests
+    use, and what a harness without an adapter needs. Rejected: an adapter that owns the
+    process (spawning, waiting, capturing) — it would duplicate the launcher's process-group,
+    timeout and cancel logic, and the seam would no longer be testable with a stub on `PATH`.
+    Discussion: issue #10.

@@ -75,11 +75,9 @@ pub fn launch(
 ) -> Result<End, LaunchError> {
     // The folder must still be the one that was created before anything is written in it.
     task.verify()?;
-    if profile.command.as_ref().is_none_or(Vec::is_empty) {
-        return Err(LaunchError::NoCommand {
-            profile: profile.name.to_string(),
-        });
-    }
+    // The argv comes from the profile's command or its adapter; a harness without either
+    // fails here, before a log exists.
+    crate::adapter::argv(profile)?;
     let log = File::create_new(task.log_path()).map_err(|source| LaunchError::Log {
         path: task.log_path(),
         source,
@@ -482,7 +480,7 @@ mod tests {
             &plan(&profile),
         )
         .unwrap_err();
-        assert!(matches!(error, LaunchError::NoCommand { .. }), "{error}");
+        assert!(matches!(error, LaunchError::Adapter(_)), "{error}");
         fs::remove_dir_all(&root).unwrap();
     }
 
