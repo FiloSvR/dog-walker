@@ -26,10 +26,11 @@ the profiles, creates a private directory and an env file for each, and adds a l
 harness's instructions file so that it reads `dog-walker instructions` before it delegates. It
 first asks whether this is for the project (the default: its own profiles, kept outside the
 repository, and its own `CLAUDE.md` or `AGENTS.md`) or global (one config for every project). It
-shows what it will write and asks first. It never asks for, reads or writes a
-secret: it prints what is left to you (your key, a login), and you finish with:
+shows what it will write and asks first. For each secondary it asks for the key (typed hidden)
+and saves it in that profile's env file, mode 600, which dog-walker loads itself whenever it runs
+or checks the profile; for Codex it offers to copy your login. It never reads a key from your
+environment, never takes one as an option, and never prints one. Finish with:
 
-    set -a; . ~/.config/dog-walker/worker.env; set +a
     dog-walker doctor worker
 
 `doctor` checks a profile's directories, sandbox, program, variables, a write to the temporary

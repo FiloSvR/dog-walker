@@ -31,6 +31,24 @@ pub const LINE: &str =
 /// The roles the installer asks about, and the profile each becomes.
 pub const ROLES: [&str; 3] = ["main", "worker", "reviewer"];
 
+/// A credential the user typed. It is written to the profile's env file and nowhere else: it
+/// has no `Display`, and its `Debug` hides it, so a plan printed by mistake does not show it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Secret(String);
+
+impl Secret {
+    /// The value, for the one place that writes it.
+    fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(<hidden>)")
+    }
+}
+
 /// A harness and model chosen for a role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pick {
@@ -38,6 +56,10 @@ pub struct Pick {
     pub model: String,
     /// The name of the variable that holds the credential, when the harness needs one.
     pub credential: Option<String>,
+    /// The credential's value, when the user typed it (D22).
+    pub secret: Option<Secret>,
+    /// Whether to copy the user's Codex login into the profile's private directory (D22).
+    pub copy_login: bool,
 }
 
 /// Where things are on this machine.
@@ -158,6 +180,8 @@ pub fn parse_pick(text: &str) -> Result<Option<Pick>, String> {
         harness,
         model,
         credential,
+        secret: None,
+        copy_login: false,
     }))
 }
 
@@ -236,6 +260,10 @@ pub struct ProfilePlan {
     pub dirs: Vec<PathBuf>,
     /// An env file to create (mode 600), if the profile needs one.
     pub env_file: Option<(PathBuf, String)>,
+    /// The credential the user typed, by variable name: written to the env file, mode 600.
+    pub secret: Option<(String, Secret)>,
+    /// The user's Codex login and where it is copied (mode 600), when they chose to.
+    pub login: Option<(PathBuf, PathBuf)>,
     /// What is left for the user to do, as commands and names.
     pub notes: Vec<String>,
 }
@@ -252,6 +280,8 @@ pub fn plan_main(name: &str, pick: &Pick) -> ProfilePlan {
         toml,
         dirs: Vec::new(),
         env_file: None,
+        secret: None,
+        login: None,
         notes: Vec::new(),
     }
 }
@@ -330,14 +360,13 @@ pub fn plan_secondary(
     ));
 
     let mut env_text = format!(
-        "# Variables for the `{name}` profile. Load them in the shell that runs dog-walker:\n\
-         #   set -a; . {}; set +a\n",
-        shell_quote(&text(&env_path))
+        "# Variables for the `{name}` profile. dog-walker loads this file itself when it runs or\n\
+         # checks the profile; the values here replace the shell's. It is read, never run.\n"
     );
     for (variable, value) in &file_vars {
         env_text.push_str(&format!("{variable}={}\n", shell_quote(value)));
     }
-    if let Some(credential) = &pick.credential {
+    if let Some(credential) = pick.credential.as_ref().filter(|_| pick.secret.is_none()) {
         env_text.push_str(&format!(
             "# {credential}=<your credential: uncomment, and keep this file mode 600>\n"
         ));
@@ -349,6 +378,13 @@ pub fn plan_secondary(
         toml,
         dirs,
         env_file: Some((env_path, env_text)),
+        secret: pick.credential.clone().zip(pick.secret.clone()),
+        login: pick.copy_login.then(|| {
+            (
+                host.home.join(".codex").join("auth.json"),
+                private.join("auth.json"),
+            )
+        }),
         notes,
     }
 }
@@ -373,7 +409,14 @@ fn notes_for(name: &str, pick: &Pick, private: &Path, env_path: &Path, found: bo
             pick.model
         ));
     }
+    let given = pick.secret.is_some();
     match pick.harness {
+        Harness::Claude | Harness::Pi if given => {}
+        Harness::Codex if pick.copy_login => {}
+        Harness::Dsh if given => notes.push(format!(
+            "`{name}`: `cp -r ~/.dsh/profiles/headless {}`",
+            quoted(&private.join("profiles"))
+        )),
         Harness::Claude => notes.push(format!(
             "`{name}`: run `claude setup-token` in your terminal and put the token in {env} as \
              {} (or use an API key and name that variable)",
@@ -396,7 +439,7 @@ fn notes_for(name: &str, pick: &Pick, private: &Path, env_path: &Path, found: bo
         )),
     }
     notes.push(format!(
-        "`{name}`: then `set -a; . {}; set +a` and `dog-walker doctor {name}`",
+        "`{name}`: then `dog-walker doctor {name}` (dog-walker loads {} itself)",
         quoted(env_path)
     ));
     notes
@@ -466,6 +509,8 @@ pub struct Options {
     pub main: Option<String>,
     pub worker: Option<String>,
     pub reviewer: Option<String>,
+    /// Whether stdin is a terminal, where what is typed for a key is hidden; off for a pipe.
+    pub hide: bool,
     /// `project` or `global`: whose config and instructions file; asked when not given (and the
     /// project when `yes` skips asking).
     pub scope: Option<String>,
@@ -505,6 +550,71 @@ fn ask(
         (true, Some(default)) => default.to_owned(),
         _ => line.to_owned(),
     })
+}
+
+/// Echo off while a secret is typed, and back on when this is dropped.
+struct NoEcho {
+    original: rustix::termios::Termios,
+}
+
+impl NoEcho {
+    fn new() -> Result<NoEcho, SetupError> {
+        use rustix::termios::{LocalModes, OptionalActions, tcgetattr, tcsetattr};
+        let hide = |errno: rustix::io::Errno| SetupError::Hide {
+            source: errno.into(),
+        };
+        let stdin = std::io::stdin();
+        let original = tcgetattr(&stdin).map_err(hide)?;
+        let mut quiet = original.clone();
+        quiet.local_modes.remove(LocalModes::ECHO);
+        tcsetattr(&stdin, OptionalActions::Flush, &quiet).map_err(hide)?;
+        Ok(NoEcho { original })
+    }
+}
+
+impl Drop for NoEcho {
+    fn drop(&mut self) {
+        let _ = rustix::termios::tcsetattr(
+            std::io::stdin(),
+            rustix::termios::OptionalActions::Flush,
+            &self.original,
+        );
+    }
+}
+
+/// Reads a key. On a terminal it is not shown as it is typed, and if that cannot be arranged
+/// the key is not asked for at all. An empty line means the user will add it to the env file.
+fn ask_secret(
+    input: &mut dyn BufRead,
+    err: &mut dyn Write,
+    hide: bool,
+    question: &str,
+) -> Result<Option<Secret>, SetupError> {
+    output::text(err, &format!("{question}: "))?;
+    let mut line = String::new();
+    {
+        let _quiet = if hide { Some(NoEcho::new()?) } else { None };
+        let read = input
+            .read_line(&mut line)
+            .map_err(|source| SetupError::Read { source })?;
+        if read == 0 {
+            return Err(SetupError::NoAnswer {
+                question: question.to_owned(),
+            });
+        }
+    }
+    if hide {
+        // The user's Enter was not shown either.
+        output::line(err, "")?;
+    }
+    let value = line.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.len() > 4096 || value.chars().any(char::is_control) {
+        return Err(SetupError::BadSecret);
+    }
+    Ok(Some(Secret(value.to_owned())))
 }
 
 /// The pick for `role`: from the command line, or asked.
@@ -575,6 +685,8 @@ fn pick_for(
         harness,
         model,
         credential,
+        secret: None,
+        copy_login: false,
     }))
 }
 
@@ -678,13 +790,16 @@ fn build(
                 .push(format!("`{role}` is in the config already: left as it is"));
             continue;
         }
-        let Some(pick) = pick_for(role, options, &detected, input, err)? else {
+        let Some(mut pick) = pick_for(role, options, &detected, input, err)? else {
             continue;
         };
         if role == "main" {
             main_harness = Some(pick.harness);
             plan.profiles.push(plan_main(role, &pick));
         } else {
+            if !options.yes {
+                ask_credentials(role, &mut pick, options, host, input, err, &mut plan.notes)?;
+            }
             let installed = find_program(pick.harness.as_str(), &host.path)
                 .and_then(|resolved| install_dir(pick.harness, &resolved))
                 .filter(|dir| dir.is_dir());
@@ -762,6 +877,56 @@ fn scope_for(
     }
 }
 
+/// Asks for the secondary's key (or, for Codex, whether to copy the login), unless the env file
+/// or the copy is there already: those are never overwritten, so the user is told instead.
+fn ask_credentials(
+    role: &str,
+    pick: &mut Pick,
+    options: &Options,
+    host: &Host,
+    input: &mut dyn BufRead,
+    err: &mut dyn Write,
+    notes: &mut Vec<String>,
+) -> Result<(), SetupError> {
+    let env_path = host.config_dir.join(format!("{role}.env"));
+    if let Some(credential) = pick.credential.clone() {
+        if env_path.symlink_metadata().is_ok() {
+            notes.push(format!(
+                "`{role}`: {} exists already and is left as it is: put {credential} in it by hand",
+                env_path.display()
+            ));
+        } else {
+            let hint = match pick.harness {
+                Harness::Claude => " from `claude setup-token`",
+                _ => "",
+            };
+            pick.secret = ask_secret(
+                input,
+                err,
+                options.hide,
+                &format!(
+                    "{role}: value of {credential}{hint} (typed hidden, saved only in the profile's env file; empty to add it yourself)"
+                ),
+            )?;
+        }
+    }
+    let login = host.home.join(".codex").join("auth.json");
+    let copy = host.config_dir.join(role).join("auth.json");
+    if pick.harness == Harness::Codex && login.is_file() && copy.symlink_metadata().is_err() {
+        let answer = ask(
+            input,
+            err,
+            &format!(
+                "{role}: copy your Codex login {} into the profile's private directory (mode 600)?  (Y/n)",
+                login.display()
+            ),
+            Some("y"),
+        )?;
+        pick.copy_login = matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes");
+    }
+    Ok(())
+}
+
 fn show(plan: &Plan, err: &mut dyn Write) -> Result<(), SetupError> {
     output::line(err, "dog-walker will write:")?;
     if !plan.profiles.is_empty() {
@@ -785,6 +950,27 @@ fn show(plan: &Plan, err: &mut dyn Write) -> Result<(), SetupError> {
                 &format!(
                     "  - env file {} (mode 600, no secret in it)",
                     path.display()
+                ),
+            )?;
+        }
+    }
+    for profile in &plan.profiles {
+        if let Some((variable, _)) = &profile.secret {
+            output::line(
+                err,
+                &format!(
+                    "  - the value you typed for {variable}, in the env file of {}",
+                    profile.name
+                ),
+            )?;
+        }
+        if let Some((from, to)) = &profile.login {
+            output::line(
+                err,
+                &format!(
+                    "  - your Codex login {} copied to {} (mode 600)",
+                    from.display(),
+                    to.display()
                 ),
             )?;
         }
@@ -826,7 +1012,24 @@ fn write_plan(plan: &Plan) -> Result<(), SetupError> {
             check_existing(dir, true)?;
         }
         if let Some((path, text)) = &profile.env_file {
-            create_private(path, text)?;
+            match &profile.secret {
+                Some((variable, secret)) => {
+                    // A key is written only into a file made now, never into one that is there.
+                    if path.symlink_metadata().is_ok() {
+                        return Err(SetupError::Exists {
+                            path: path.clone(),
+                            why: "appeared while you were answering: put the key in it by hand"
+                                .to_owned(),
+                        });
+                    }
+                    let line = format!("{variable}={}\n", shell_quote(secret.value()));
+                    create_private(path, &format!("{text}{line}"))?;
+                }
+                None => create_private(path, text)?,
+            }
+        }
+        if let Some((from, to)) = &profile.login {
+            copy_private(from, to)?;
         }
     }
     // Read again now: the file may have changed while the user was answering.
@@ -900,6 +1103,9 @@ fn preflight(plan: &Plan, host: &Host) -> Result<(), SetupError> {
         if let Some((path, _)) = &profile.env_file {
             check_existing(path, false)?;
         }
+        if let Some((_, to)) = &profile.login {
+            check_existing(to, false)?;
+        }
     }
     Ok(())
 }
@@ -962,6 +1168,26 @@ fn append(path: &Path, text: &str, mode: u32) -> Result<(), SetupError> {
 }
 
 /// Creates a mode 600 file; one that exists is left alone, since it may hold the user's secret.
+/// Copies `from` to `to`, a new file closed to others from the first byte.
+fn copy_private(from: &Path, to: &Path) -> Result<(), SetupError> {
+    let io = |path: &Path| {
+        let path = path.to_owned();
+        move |source| SetupError::Io { path, source }
+    };
+    let mut source = fs::File::open(from).map_err(io(from))?;
+    let mut copy = fs::OpenOptions::new()
+        .append(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(to)
+        .map_err(io(to))?;
+    let copied = std::io::copy(&mut source, &mut copy);
+    if copied.is_err() {
+        let _ = fs::remove_file(to);
+    }
+    copied.map(|_| ()).map_err(io(to))
+}
+
 fn create_private(path: &Path, text: &str) -> Result<(), SetupError> {
     let io = |source| SetupError::Io {
         path: path.to_owned(),

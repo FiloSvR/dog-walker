@@ -462,8 +462,9 @@ fn at31_pi_main_gets_the_line_printed() {
 fn at31_the_questions_can_be_answered_on_stdin() {
     let home = Home::new("ask");
     home.all_harnesses();
-    // main: harness, model; worker: harness, model, credential variable; reviewer: no; confirm.
-    let answers = "claude\n\npi\nopenrouter/z-ai/glm\nMY_KEY\nno\ny\n";
+    // main: harness, model; worker: harness, model, credential variable, its value (left for
+    // later); reviewer: no; confirm.
+    let answers = "claude\n\npi\nopenrouter/z-ai/glm\nMY_KEY\n\nno\ny\n";
     let out = home.init(&[], answers);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let config = fs::read_to_string(home.config()).unwrap();
@@ -481,7 +482,7 @@ fn at31_a_secret_typed_as_a_variable_name_is_not_echoed() {
     home.all_harnesses();
     // main: harness, model; worker: harness, model, credential (a key, then the default);
     // reviewer: no; confirm.
-    let answers = "claude\n\npi\n\nsk-or-v1-TYPED-BY-MISTAKE\n\nno\ny\n";
+    let answers = "claude\n\npi\n\nsk-or-v1-TYPED-BY-MISTAKE\n\n\nno\ny\n";
     let out = home.init(&[], answers);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
@@ -496,6 +497,60 @@ fn at31_a_secret_typed_as_a_variable_name_is_not_echoed() {
     );
     let written = fs::read_to_string(home.config()).unwrap();
     assert!(!written.contains("TYPED-BY-MISTAKE"), "{written}");
+}
+
+// AT31 (R25, D22): a key typed for a secondary is saved in its env file (mode 600) and nowhere
+// else: not in the config, not in what the installer prints.
+#[test]
+fn at31_a_typed_key_is_saved_only_in_the_env_file() {
+    let home = Home::new("key");
+    home.all_harnesses();
+    // main: harness, model; worker: harness, model, credential variable, the key; reviewer: no;
+    // confirm.
+    let out = home.init(&[], "claude\n\npi\n\n\nTYPED-KEY-5521\nno\ny\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let env = home.path().join(".config/dog-walker/worker.env");
+    let text = fs::read_to_string(&env).unwrap();
+    assert!(
+        text.contains("OPENROUTER_API_KEY='TYPED-KEY-5521'"),
+        "{text}"
+    );
+    assert_eq!(mode(&env), 0o600);
+    let loaded = dog_walker::envfile::parse(&text);
+    assert!(loaded.contains(&("OPENROUTER_API_KEY".to_owned(), "TYPED-KEY-5521".to_owned())));
+    let config = fs::read_to_string(home.config()).unwrap();
+    assert!(!config.contains("TYPED-KEY-5521"), "{config}");
+    assert!(
+        config.contains("secrets = [\"OPENROUTER_API_KEY\"]"),
+        "{config}"
+    );
+    assert!(!stderr(&out).contains("TYPED-KEY-5521"), "{}", stderr(&out));
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("TYPED-KEY-5521"));
+    // Nothing is left for the user to do about the key.
+    assert!(!stderr(&out).contains("put your key"), "{}", stderr(&out));
+}
+
+// AT31 (R25, D22): the Codex login is copied into the profile's private directory (mode 600)
+// when the user agrees, and its content is never printed.
+#[test]
+fn at31_the_codex_login_is_copied_when_the_user_agrees() {
+    let home = Home::new("login");
+    home.all_harnesses();
+    fs::create_dir_all(home.path().join(".codex")).unwrap();
+    fs::write(home.path().join(".codex/auth.json"), "LOGIN-SENTINEL-77").unwrap();
+    // main: harness, model; worker: harness, model, copy the login (the default, yes);
+    // reviewer: no; confirm.
+    let out = home.init(&[], "claude\n\ncodex\n\n\nno\ny\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let copy = home.path().join(".config/dog-walker/worker/auth.json");
+    assert_eq!(fs::read_to_string(&copy).unwrap(), "LOGIN-SENTINEL-77");
+    assert_eq!(mode(&copy), 0o600);
+    assert!(
+        !stderr(&out).contains("LOGIN-SENTINEL-77"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!stderr(&out).contains("install -m 600"), "{}", stderr(&out));
 }
 
 // AT31 (R25): without a yes, nothing is written.

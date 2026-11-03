@@ -172,6 +172,8 @@ pub enum CliError {
     Nested { variable: &'static str },
     #[error("cannot find the project directory: {source}")]
     Project { source: io::Error },
+    #[error("cannot use the env file {}: {source}", path.display())]
+    EnvFile { path: PathBuf, source: io::Error },
     #[error("`{id}` is not a task id: it is the number in a task folder's name")]
     BadTaskId { id: String },
     #[error("no task {id} in .dog-walker/tasks")]
@@ -195,6 +197,13 @@ pub enum SetupError {
     Read { source: io::Error },
     #[error("cannot write {}: {source}", path.display())]
     Io { path: PathBuf, source: io::Error },
+    #[error(
+        "cannot hide what you type ({source}), so the key is not asked for: put it in the env \
+         file by hand"
+    )]
+    Hide { source: io::Error },
+    #[error("that value has a control character, which a key does not")]
+    BadSecret,
     #[error("the existing config {} is not usable: {why}", path.display())]
     Config { path: PathBuf, why: String },
     #[error("cannot use the path {}: {why}", path.display())]

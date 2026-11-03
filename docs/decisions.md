@@ -188,8 +188,7 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     private directory (700) and an env file (600) with the non-secret lines, and appends a marked
     block to the main harness's instructions file (see D20 for the project and global scopes). It shows the plan and asks first
     (`--yes` skips), appends to an existing config and never edits it, and creates a file that
-    exists never. It asks for the name of the credential variable and never reads, copies or
-    writes a value: the token and the Codex login are printed as steps. Only Claude Code
+    exists never. It asks for the name of the credential variable (D22 adds the value). Only Claude Code
     (`CLAUDE.md`, `~/.claude/CLAUDE.md`) and Codex (`AGENTS.md`, `~/.codex/AGENTS.md`) have a
     verified file; for Pi and dsh the line is printed. Rejected: a silent step on install or on the first `run` (it
     would write outside the project unasked, against R19's spirit); copying the Codex login
@@ -220,3 +219,32 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     config over the global one (it would make the effective policy depend on two files and hide
     which profile a task really ran with). Not done: a way to share a project's setup with a
     team (a committed profiles file would need an explicit trust step, as direnv's `allow`).
+
+21. **dog-walker loads the profile's env file itself.** The env file `init` writes
+    (`<profile>.env` beside the config) used to be something the user sourced in the shell that
+    ran dog-walker, and a main harness that did not know where it was could not run `doctor`
+    or a task. `run` and `doctor` now read it: `NAME=value` lines (bare or single-quoted, as
+    `init` writes them), parsed as data and never run, so `$(...)` in it does nothing. Its
+    values replace the shell's for that run; every other variable keeps the shell's value, so a
+    credential the user exports still works when the file only has it commented. A process
+    cannot change its own environment without `unsafe` (forbidden here), so the command starts
+    dog-walker again in place (`exec`, one process, same arguments) with the variables set and a
+    marker that stops a second load; this happens before the brief is read, so stdin is intact.
+    The credential is still never written by `init`; it is the user's to put in the file, which
+    is mode 600. Rejected: sourcing the file through a shell (it would run whatever the file
+    holds); having `init` export variables (a process cannot set its parent's).
+
+22. **`init` asks for the key and saves it in the profile's env file.** D19 left the credential
+    to the user, which made a fresh setup unusable until the user found the file and edited it.
+    `init` now asks, per secondary, for the credential's value, typed with echo off
+    (`termios`; if echo cannot be turned off on a terminal the key is not asked for), and
+    writes `NAME='value'` into the profile's env file, created mode 600 in the same call. For
+    Codex it offers to copy `~/.codex/auth.json` into the private directory (mode 600, created
+    with `create_new`). The value lives in a `Secret` whose `Debug` hides it, is shown nowhere
+    (the plan says only that a value was typed), is never in the config (the profile only
+    names the variable and lists it in `secrets`, so it is redacted from handovers), and is
+    never taken from the environment or an option. An env file or copy that exists is never
+    changed: the key is then not asked for and the user is told. `--yes` asks nothing, so it
+    saves no key. Rejected: a key option or environment variable (shell history, `ps`); keeping
+    the key in the config (the config is read by more tools and may be shared); echoing the key
+    for confirmation.
