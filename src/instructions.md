@@ -24,8 +24,23 @@ search for where; write down what you know.
   that the brief did not mention**: that last list is what your next brief should have said.
 
 What the secondary can find with one search is not worth a paragraph; what took you many reads
-to learn is. A short task needs a short brief. If the brief is wrong, the secondary trusts it:
-write only what you have checked.
+to learn is. If the brief is wrong, the secondary trusts it: write only what you have checked.
+
+**When to write a rich brief.** Measured on real tasks (`manual-tests/expected.md`), it usually
+saves the most when the work spans several files or the secondary would otherwise search for
+where to start, and little or nothing when one read answers the question. It cannot reduce the
+secondary's thinking, only its searching and reading, and a single run can still cost far more
+than its siblings whatever the brief says: judge a brief by several runs, not one.
+
+- Write it when you already know where the work is, because you paid for that exploration;
+  when the task touches several files; when the repository has instruction files the secondary
+  would read by default and you do not need it to; or when you will delegate several similar tasks.
+- Keep it short when the task is one file or one command; when you have not looked yet and
+  finding the pointers would cost you many reads (say "I have not checked, start from `src/`",
+  never a guess: a confident wrong pointer costs more than none); or when the exploration is the
+  task ("find out what is wrong", "survey this module").
+- A test: if you can write the pointers from memory, write them; if you would have to explore
+  first, delegate the exploration.
 
 dog-walker adds one line after your brief, telling the secondary to write its result to
 `$DOG_WALKER_RESULT_PATH`; you do not need to. The handover records your brief as you wrote it.

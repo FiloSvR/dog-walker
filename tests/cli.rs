@@ -188,6 +188,9 @@ fn at27_instructions_name_run_exit_code_and_handover() {
     // The main harness is told it need not name the result file: dog-walker adds it (D14).
     assert!(text.contains("DOG_WALKER_RESULT_PATH"), "{text}");
     assert!(text.contains("adds one line after your brief"), "{text}");
+    // The main harness is told when a rich brief pays and when it does not (R24).
+    assert!(text.contains("When to write a rich brief"), "{text}");
+    assert!(text.contains("Keep it short when"), "{text}");
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them: true when

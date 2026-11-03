@@ -9,6 +9,20 @@ without starting a task or the harness: the directories, the program, the variab
 shell), a write to the temporary directory and a TLS fetch inside the sandbox, with the fix for
 each failure.
 
+## Telling the main harness about dog-walker
+
+The guidance for the main harness (how to write a brief, run it, read the handover and what a
+task cost) ships in the binary: `dog-walker instructions` prints it. Nothing puts it in the main
+model's context for you, and a model that never reads it writes short briefs from habit. Add one
+line to the file your main harness reads at the start of a session (`AGENTS.md`, `CLAUDE.md` or
+the equivalent):
+
+    To delegate work to another harness, run `dog-walker instructions` first and follow it.
+
+That is enough: the text is the tool's own, so it stays in step with the version installed. The
+handover then shows what each task used (`tokens`, `turns`, `cost_usd`, where the harness
+reports them), which is how you judge your briefs.
+
 ## Claude Code with a subscription (no API key)
 
 The Claude Code adapter requires no credential: the profile lists the one it uses in `env`
