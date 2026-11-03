@@ -126,7 +126,6 @@ private `DSH_HOME` with the shipped one-task profile, and pass the key as an env
        cat >> $D/dsh.env <<EOF
        DSH_HOME=$D/dsh-home
        TMPDIR=$D/dsh-home/tmp
-       DSH_PERMISSION_MODE=danger-full-access
        EOF
        set -a; . $D/dsh.env; set +a
 
@@ -137,7 +136,7 @@ private `DSH_HOME` with the shipped one-task profile, and pass the key as an env
        harness = "dsh"
        dsh_profile = "headless"
        model = "deepseek"          # a label: the model lives in the dsh profile
-       env = ["DEEPSEEK_API_KEY", "DSH_HOME", "TMPDIR", "DSH_PERMISSION_MODE"]
+       env = ["DEEPSEEK_API_KEY", "DSH_HOME", "TMPDIR"]
        secrets = ["DEEPSEEK_API_KEY"]
        read_only_dirs = ["/home/you/.npm-global/lib/node_modules/@deepseek-ai/dsh"]
        writable_dirs = ["/home/you/.config/dog-walker/dsh-home"]
@@ -150,9 +149,9 @@ Why the extra variables:
 - `TMPDIR`: dsh makes a temp directory for its output spill and its shell sandbox, and the
   sandbox mounts no `/tmp`. Without it the task can still end `done`, but dsh's shell tool is
   broken (`ENOENT … mkdtemp '/tmp/dsh-spill-XXXXXX'`) and the model works around it.
-- `DSH_PERMISSION_MODE=danger-full-access`: dsh's default is `workspace-write` with approvals
-  set to `ask`. Nobody can answer in a headless run, and its own shell sandbox (`landlock`) cannot
-  start inside bwrap (`landlock-run: cannot open rule path: /tmp`). This is dsh's documented mode
-  for an outer sandbox, and dog-walker's is the boundary (D2). The dsh adapter does not set it
-  for you yet, since adapters name variables and do not give them values.
-
+- `DSH_PERMISSION_MODE=danger-full-access`: the adapter sets this itself (D16); you do nothing. dsh's
+  default is `workspace-write` with approvals set to `ask`; nobody can answer in a headless run,
+  and its own shell sandbox (`landlock`) cannot start inside bwrap (`landlock-run: cannot open
+  rule path: /tmp`). This is dsh's documented mode for an outer sandbox, and dog-walker's is the
+  boundary (D2). A profile that lists `DSH_PERMISSION_MODE` in `env`, or sets its own `command`,
+  gets its own value instead.

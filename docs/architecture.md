@@ -194,7 +194,8 @@ model_reasoning_effort="…"] --`) and dsh (`dsh --profile <dsh_profile> -- --`,
 composed profiles, and the model lives in that profile rather than in an argv flag, so its
 profile names one with `dsh_profile` (`"headless"` is the shipped one-task profile, and the
 default when the key is absent); the key is refused on any other harness. Each skip is the harness's documented mode for an externally sandboxed environment,
-which bwrap is (D2). Each harness's own directory is the profile's to list and its variables
+which bwrap is (D2); dsh has no flag for it, so its adapter sets `DSH_PERMISSION_MODE=danger-full-access`
+itself (`Adapter::fixed_env`, D16; `at28_the_dsh_adapter_meets_the_contract`). Each harness's own directory is the profile's to list and its variables
 to name: Pi and Codex need their install directory read-only, `HOME` (the adapter declares it)
 and a writable configuration directory (`~/.codex`, or a dedicated `CODEX_HOME` in `env` —
 `--ephemeral` keeps session files out of it, but Codex still writes its state there); dsh needs

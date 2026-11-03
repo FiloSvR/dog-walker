@@ -19,6 +19,13 @@ pub trait Adapter {
     fn env(&self) -> &'static [&'static str] {
         &[]
     }
+
+    /// Variables the harness needs with a fixed value, which dog-walker sets itself: its
+    /// documented mode for running inside someone else's sandbox, where the argv has no flag
+    /// for it.
+    fn fixed_env(&self) -> &'static [(&'static str, &'static str)] {
+        &[]
+    }
 }
 
 /// Claude Code, run unattended: `claude -p --dangerously-skip-permissions [--model <model>]
@@ -153,6 +160,14 @@ impl Adapter for Dsh {
         // dsh finds `$DSH_HOME` (or `$HOME/.dsh`) through the home directory.
         &["HOME"]
     }
+
+    fn fixed_env(&self) -> &'static [(&'static str, &'static str)] {
+        // dsh's default is its own shell sandbox (landlock, which cannot start inside bwrap)
+        // and an approval prompt nobody can answer in a headless run. This is its documented
+        // mode for an outer sandbox, and dog-walker's is the boundary (D2), like the flags the
+        // Claude Code and Codex adapters pass.
+        &[("DSH_PERMISSION_MODE", "danger-full-access")]
+    }
 }
 
 /// The adapter of a harness: every harness the core knows has one.
@@ -193,6 +208,21 @@ pub fn with_brief(argv: &[OsString], brief: &str) -> Vec<OsString> {
     let mut argv = argv.to_vec();
     argv.push(brief.into());
     argv
+}
+
+/// The variables dog-walker sets for the profile's harness: its adapter's fixed values. A profile
+/// with its own `command` is not running the adapter, and one that lists the name in `env`
+/// chose its own value (the host's), so neither gets the adapter's.
+pub fn fixed_env(profile: &Profile) -> Vec<(String, String)> {
+    if profile.command.as_ref().is_some_and(|c| !c.is_empty()) {
+        return Vec::new();
+    }
+    of(profile.harness)
+        .fixed_env()
+        .iter()
+        .filter(|(name, _)| !profile.env.iter().any(|own| own == name))
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+        .collect()
 }
 
 /// The variables a profile's harness needs by name: its adapter's, and the profile's own.
@@ -394,5 +424,26 @@ mod tests {
         profile.env = vec!["HOME".to_owned()];
         profile.command = Some(vec!["/bin/echo".to_owned()]);
         assert_eq!(env(&profile), ["HOME"]);
+    }
+
+    #[test]
+    fn dsh_runs_in_its_outer_sandbox_mode_unless_the_profile_says_otherwise() {
+        let mut dsh = profile(Harness::Dsh, "deepseek");
+        let mode = (
+            "DSH_PERMISSION_MODE".to_owned(),
+            "danger-full-access".to_owned(),
+        );
+        assert_eq!(fixed_env(&dsh), [mode]);
+        // The profile lists the name: its own (the host's) value is the one used.
+        dsh.env = vec!["DSH_PERMISSION_MODE".to_owned()];
+        assert_eq!(fixed_env(&dsh), []);
+        // A profile with its own command is not running the adapter.
+        dsh.env = Vec::new();
+        dsh.command = Some(vec!["/bin/echo".to_owned()]);
+        assert_eq!(fixed_env(&dsh), []);
+        // The other adapters fix nothing.
+        for harness in [Harness::Claude, Harness::Pi, Harness::Codex] {
+            assert_eq!(fixed_env(&profile(harness, "m")), []);
+        }
     }
 }

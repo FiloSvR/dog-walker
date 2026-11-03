@@ -272,6 +272,10 @@ fn task_env(profile: &Profile, task: &Task) -> Vec<(OsString, OsString)> {
     if let Some(effort) = &profile.effort {
         env.push((OsString::from(EFFORT), OsString::from(effort)));
     }
+    // What the adapter sets for its harness (a profile's own `env` entry or `command` wins).
+    for (name, value) in crate::adapter::fixed_env(profile) {
+        env.push((OsString::from(name), OsString::from(value)));
+    }
     env
 }
 
