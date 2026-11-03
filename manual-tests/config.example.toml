@@ -51,3 +51,14 @@ env = ["DEEPSEEK_API_KEY", "DSH_HOME", "TMPDIR"]
 secrets = ["DEEPSEEK_API_KEY"]
 read_only_dirs = ["@HOME@/.npm-global/lib/node_modules/@deepseek-ai/dsh"]
 writable_dirs = ["@HOME@/.config/dog-walker/dsh-home"]
+
+# A reviewer that can run cargo: the toolchain read-only, the project's own CARGO_HOME, offline.
+# Needs ~/.config/dog-walker/cargo.env (docs/setup.md, "A reviewer that runs cargo").
+# Replace <toolchain> with the directory name under ~/.rustup/toolchains.
+[profiles.reviewer-cargo]
+harness = "codex"
+model = "gpt-6.1-sol"
+effort = "high"
+env = ["CODEX_HOME", "CARGO_HOME", "CARGO_NET_OFFLINE", "TMPDIR"]
+read_only_dirs = ["@HOME@/.npm-global/lib/node_modules/@openai/codex", "@HOME@/.rustup/toolchains/<toolchain>"]
+writable_dirs = ["@HOME@/.config/dog-walker/codex-home"]

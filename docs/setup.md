@@ -199,3 +199,35 @@ Why the extra variables:
   rule path: /tmp`). This is dsh's documented mode for an outer sandbox, and dog-walker's is the
   boundary (D2). A profile that lists `DSH_PERMISSION_MODE` in `env`, or sets its own `command`,
   gets its own value instead.
+
+## A reviewer that runs cargo
+
+A reviewer that can only read a diff misses what a compiler and one test would show (a test
+that cannot fail, a formatting error). To let a reviewer on any harness run cargo, add to its
+profile:
+
+1. **The toolchain, read-only.** `rustup` proxies in `~/.cargo/bin` need the whole of `~`, so
+   mount one toolchain and put its `bin` first on `PATH`:
+
+       T=$(rustup toolchain list | head -1 | cut -d' ' -f1)   # e.g. stable-x86_64-unknown-linux-gnu
+       # read_only_dirs += ["/home/you/.rustup/toolchains/<that name>"]
+
+   `PATH` always reaches the sandbox from your shell, so set it in the profile's env file:
+   `PATH=$HOME/.rustup/toolchains/$T/bin:$PATH`.
+2. **A cargo home with the crates already downloaded.** Inside the sandbox cargo cannot reach
+   `~/.cargo`. Use a directory in the project (for example the `.cargo-home` a `cargo fetch` with
+   `CARGO_HOME=$PWD/.cargo-home` fills; keep it in `.gitignore`), and add `CARGO_HOME` and
+   `CARGO_NET_OFFLINE=true` to `env` and to the env file.
+3. **A temporary directory.** The sandbox has no `/tmp`, and tests that use the filesystem fail
+   with a read-only error without one. Create one in the same place and name it:
+
+       mkdir -p $PWD/.cargo-home/tmp
+       # env file: TMPDIR=$PWD/.cargo-home/tmp      # and "TMPDIR" in the profile's env
+
+4. **The target directory** is the project's `target/`, writable like the rest of the project.
+   Build output, the cargo home and the temporary directory are the only things the reviewer
+   writes besides its result, and all three are ignored by git.
+
+`dog-walker doctor <profile>` checks the directories and variables; then ask the reviewer to
+run `cargo --version` and one named test. The sandbox cannot nest `bwrap`, so the tests that
+need a sandbox report a skip there; CI still runs them.
