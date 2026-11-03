@@ -395,8 +395,10 @@ fn shown(dir: &Path, field: &'static str, origin: &str) -> Result<PathBuf, Overr
 /// `bytes` with every configured secret value replaced, byte for byte: a log is not required
 /// to be UTF-8, and a secret that is not is still a secret.
 pub fn redact_bytes(bytes: &[u8], secrets: &[Vec<u8>]) -> Vec<u8> {
+    let mut ordered: Vec<&Vec<u8>> = secrets.iter().filter(|secret| !secret.is_empty()).collect();
+    ordered.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
     let mut redacted = bytes.to_vec();
-    for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
+    for secret in ordered {
         let mut search = 0;
         while let Some(rest) = redacted.get(search..) {
             let Some(at) = rest
@@ -416,8 +418,11 @@ pub fn redact_bytes(bytes: &[u8], secrets: &[Vec<u8>]) -> Vec<u8> {
 /// `text` with every configured secret value replaced: the harness may print one, and the
 /// handover and the log outlive the run (R18).
 pub fn redact(text: &str, secrets: &[String]) -> String {
+    // Longest first: a value that contains another is removed whole, not in pieces.
+    let mut ordered: Vec<&String> = secrets.iter().filter(|secret| !secret.is_empty()).collect();
+    ordered.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
     let mut redacted = text.to_owned();
-    for secret in secrets {
+    for secret in ordered {
         redacted = redacted.replace(secret.as_str(), "[redacted]");
     }
     redacted

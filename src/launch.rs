@@ -124,10 +124,14 @@ pub fn launch(
         }
     };
     drop(child.stdin.take());
-    let end = wait(&mut child, &task.directory().join(CANCEL_FILE), timeout);
+    let ending = wait(&mut child, &task.directory().join(CANCEL_FILE), timeout);
+    // Whatever the ending, the group is over before the log is read: a child that outlived
+    // the harness could append what was just redacted (R18). An exited leader still has its
+    // group to end.
+    end(&mut child)?;
     // The harness may have printed a secret; the log outlives the run (R18).
     redact_log(task, &plan.policy().secret_bytes())?;
-    end
+    ending
 }
 
 /// Rewrites `harness.log` with the configured secret values replaced. A log with no secret is
@@ -156,7 +160,12 @@ fn redact_log(task: &Task, secrets: &[Vec<u8>]) -> Result<(), LaunchError> {
     }
     let text = match fs::read(&path) {
         Ok(text) => text,
-        Err(source) => return Err(LaunchError::Log { path, source }),
+        Err(source) => {
+            // The log cannot be cleaned, so it is emptied: a secret in it is worse than a
+            // missing diagnosis.
+            wipe(&path);
+            return Err(LaunchError::Log { path, source });
+        }
     };
     // The file may have been swapped for a link after the check: refusing here is cheaper than
     // following one into the host.
@@ -166,6 +175,7 @@ fn redact_log(task: &Task, secrets: &[Vec<u8>]) -> Result<(), LaunchError> {
     };
     if !opened.file_type().is_file() || opened.dev() != before.dev() || opened.ino() != before.ino()
     {
+        // Not the file that was read: it is not ours to clean.
         return Err(LaunchError::Log {
             path,
             source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "the log was replaced"),
@@ -179,14 +189,33 @@ fn redact_log(task: &Task, secrets: &[Vec<u8>]) -> Result<(), LaunchError> {
     let written = (|| {
         let mut file = fs::File::create_new(&temp)?;
         file.write_all(&redacted)?;
+        file.sync_all()?;
         fs::rename(&temp, &path)
     })();
     match written {
         Ok(()) => Ok(()),
         Err(source) => {
             let _ = fs::remove_file(&temp);
+            // The rewrite failed, so the log is emptied instead: it is the log that holds
+            // what has to go.
+            wipe(&path);
             Err(LaunchError::Log { path, source })
         }
+    }
+}
+
+/// Empties a log that cannot be redacted. Best effort: the run fails either way, and a link
+/// swapped in is not followed.
+fn wipe(path: &Path) {
+    if let Ok(fd) = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::TRUNC
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    ) {
+        drop(fd);
     }
 }
 

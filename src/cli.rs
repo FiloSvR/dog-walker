@@ -255,8 +255,10 @@ fn run_task(
     let recorded = sandbox::redact(&brief, &secrets);
     let task = Task::create(&project, &recorded)?;
     let handover_path = task.handover_path();
-    let mut handover = Handover::new(&task.id(), &profile.name, &recorded)
-        .with_sandbox(&plan.policy().render(plan.sandboxed()));
+    // The policy section lists directories, which could contain a secret value; it is
+    // redacted like the rest of what dog-walker keeps (R18).
+    let sandbox = sandbox::redact(&plan.policy().render(plan.sandboxed()), &secrets);
+    let mut handover = Handover::new(&task.id(), &profile.name, &recorded).with_sandbox(&sandbox);
     save(&handover, &task)?;
     // The handover exists, so its path goes out now: whatever happens to the task from here,
     // stdout holds it (R6). The log lines are best effort: a closed stderr is no reason to

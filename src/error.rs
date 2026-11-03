@@ -91,7 +91,7 @@ pub enum LaunchError {
     Sandbox(#[from] SandboxError),
     #[error("profile `{profile}` has no `command` to run")]
     NoCommand { profile: String },
-    #[error("cannot open the log {}: {source}", path.display())]
+    #[error("cannot use the log {}: {source}", path.display())]
     Log { path: PathBuf, source: io::Error },
     #[error("cannot start the harness `{}`: {source}", program.to_string_lossy())]
     Spawn {

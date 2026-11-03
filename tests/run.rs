@@ -110,7 +110,9 @@ case $mode in
     ;;
   secret)
     {
-      printf 'saw: %s\n' "${PROFILE_SECRET:+yes}"
+      seen=no
+      if [ "$PROFILE_SECRET" = "topsecret-123" ]; then seen=exact; fi
+      printf 'seen: %s\n' "$seen"
       printf 'value: %s\n' "${PROFILE_SECRET:-<unset>}"
       printf 'plain: %s\n' "${TEST_VALUE:-<unset>}"
     } > "$result"
@@ -1481,7 +1483,8 @@ fn at23_a_configured_secret_is_redacted() {
     // and the log, and the result is the harness's output.
     let result = fs::read_to_string(fixture.result()).unwrap();
     assert!(result.contains("value: topsecret-123"), "{result}");
-    assert!(handover.contains("saw: yes"), "{handover}");
+    // The value the harness got is the exact one, not a placeholder.
+    assert!(handover.contains("seen: exact"), "{handover}");
     assert!(handover.contains("plain: hello"), "{handover}");
     assert!(handover.contains("value: [redacted]"), "{handover}");
     assert!(!handover.contains("topsecret-123"), "{handover}");
