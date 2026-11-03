@@ -484,6 +484,27 @@ fn at6_the_harness_gets_no_stdin() {
     );
 }
 
+// AT6 (R5): the harness is told where its result goes, after the brief, whatever the brief says;
+// the handover records the brief as written, without it.
+#[test]
+fn at6_the_harness_is_told_where_to_write_its_result() {
+    let fixture = Fixture::new("at6-footer", "result");
+    let out = fixture.run(&["run", "alpha", "Fix the parser bug."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    let (record, result) = handover.split_once("## Result").unwrap();
+    assert!(record.contains("Fix the parser bug."), "{handover}");
+    assert!(
+        !record.contains("DOG_WALKER_RESULT_PATH"),
+        "the record holds the brief as written: {handover}"
+    );
+    assert!(
+        result.contains("prompt: Fix the parser bug.\n\nWrite your result to the file named by"),
+        "{handover}"
+    );
+    assert!(result.contains("$DOG_WALKER_RESULT_PATH"), "{handover}");
+}
+
 // AT6 (R5): the brief can come from stdin, with `-`.
 #[test]
 fn at6_a_brief_from_stdin() {

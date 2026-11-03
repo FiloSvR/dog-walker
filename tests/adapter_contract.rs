@@ -89,6 +89,18 @@ fn stub(dir: &Path, program: &str) -> PathBuf {
     path
 }
 
+/// Through the real CLI the last argument is the brief and then the result footer, one argument
+/// (the launcher's `prompt`), where the harness's argv recorded one argument per line.
+fn assert_brief_last(printed: &str) {
+    let marker = "\nthe brief\n\nWrite your result to the file named by the environment variable";
+    assert!(printed.contains(marker), "{printed}");
+    assert!(printed.contains("$DOG_WALKER_RESULT_PATH"), "{printed}");
+    assert!(
+        printed.trim_end().ends_with("and nowhere else."),
+        "{printed}"
+    );
+}
+
 /// The contract, checked against a stub of the harness: the adapter's argv with the brief
 /// last (the launcher's own rule), the model and the effort in it, stdin closed, and a result.
 fn contract(adapter: &dyn Adapter, harness: Harness, dir: &Path) {
@@ -218,7 +230,7 @@ fn at28_the_claude_code_adapter_meets_the_contract() {
             .any(|w| w == ["--model", "claude-sonnet-4-5"]),
         "{printed}"
     );
-    assert_eq!(recorded.last().copied(), Some("the brief"), "{printed}");
+    assert_brief_last(&printed);
     assert_eq!(
         fs::read_to_string(project.join("stdin.txt"))
             .unwrap()
@@ -281,15 +293,18 @@ fn at28_the_pi_adapter_meets_the_contract() {
     );
     assert!(recorded.contains(&"--no-session"), "{printed}");
     assert_eq!(
-        recorded.get(recorded.len() - 2).copied(),
+        recorded
+            .iter()
+            .position(|arg| *arg == "the brief")
+            .map(|at| recorded[at - 1]),
         Some("--"),
-        "{printed}"
+        "the brief follows `--`: {printed}"
     );
     assert!(
         recorded.windows(2).any(|w| w == ["--thinking", "high"]),
         "{printed}"
     );
-    assert_eq!(recorded.last().copied(), Some("the brief"), "{printed}");
+    assert_brief_last(&printed);
     assert_eq!(
         fs::read_to_string(project.join("stdin.txt"))
             .unwrap()
@@ -371,11 +386,14 @@ fn at28_the_codex_adapter_meets_the_contract() {
         "{printed}"
     );
     assert_eq!(
-        recorded.get(recorded.len() - 2).copied(),
+        recorded
+            .iter()
+            .position(|arg| *arg == "the brief")
+            .map(|at| recorded[at - 1]),
         Some("--"),
-        "{printed}"
+        "the brief follows `--`: {printed}"
     );
-    assert_eq!(recorded.last().copied(), Some("the brief"), "{printed}");
+    assert_brief_last(&printed);
     assert_eq!(
         fs::read_to_string(project.join("stdin.txt"))
             .unwrap()
@@ -442,11 +460,14 @@ fn at28_the_dsh_adapter_meets_the_contract() {
         "{printed}"
     );
     assert_eq!(
-        recorded.get(recorded.len() - 2).copied(),
+        recorded
+            .iter()
+            .position(|arg| *arg == "the brief")
+            .map(|at| recorded[at - 1]),
         Some("--"),
-        "{printed}"
+        "the brief follows `--`: {printed}"
     );
-    assert_eq!(recorded.last().copied(), Some("the brief"), "{printed}");
+    assert_brief_last(&printed);
     assert_eq!(
         fs::read_to_string(project.join("stdin.txt"))
             .unwrap()

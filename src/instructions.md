@@ -11,9 +11,9 @@ State, in plain words, what the secondary needs and nothing else:
 - **Context**: what it must know that it cannot find in the repository.
 - **Constraints**: what it must not do or touch.
 - **Done when**: a checklist you can verify afterwards.
-- **Where to answer**: the secondary is told nothing but the brief, so end it with "write your
-  result to the file named by `$DOG_WALKER_RESULT_PATH`, and nowhere else". Without that line
-  it has no result file, and the task ends `failed` with no result.
+
+dog-walker adds one line after your brief, telling the secondary to write its result to
+`$DOG_WALKER_RESULT_PATH`; you do not need to. The handover records your brief as you wrote it.
 
 ## 2. Run it
 
@@ -23,13 +23,11 @@ State, in plain words, what the secondary needs and nothing else:
 
 A profile sets a `command` to say exactly what to run; without one, its harness's adapter
 builds the command line (Claude Code, Pi, Codex and dsh).
-A Claude Code profile needs `ANTHROPIC_API_KEY` in `env`, since its adapter reads the key from
-the environment. To use a subscription instead, give the profile a `command` that repeats the
-adapter's arguments (`claude -p --dangerously-skip-permissions --model <model> --effort <effort>
---`), put `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) in `env` and `secrets`, and give
-it Claude's install directory in `read_only_dirs`, a private `CLAUDE_CONFIG_DIR` in
-`writable_dirs`, and a `CLAUDE_CODE_TMPDIR` and `TMPDIR` inside that directory: the sandbox has
-no `/tmp`, and Claude Code fails without one.
+A Claude Code profile lists its own credential in `env` and `secrets`: `ANTHROPIC_API_KEY`, or
+`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` for a subscription. It also needs Claude's
+install directory in `read_only_dirs`, a private `CLAUDE_CONFIG_DIR` in `writable_dirs`, and a
+`CLAUDE_CODE_TMPDIR` and `TMPDIR` inside that directory: the sandbox has no `/tmp`, and Claude
+Code fails without one. `docs/setup.md` has the steps.
 
 A Pi profile's model is Pi's `provider/id` shape (`deepseek/deepseek-chat`), its effort is one
 of Pi's thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), and its

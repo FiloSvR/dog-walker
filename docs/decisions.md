@@ -121,3 +121,14 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     adapter that owns the process (spawning, waiting, capturing) — it would duplicate the
     launcher's process-group, timeout and cancel logic, and the seam would no longer be
     testable with a stub on `PATH`. Discussion: issue #10.
+
+14. **The launcher tells the secondary where its result goes, and the Claude adapter requires no credential**
+    (D14, 2026-11-03). Found by delegating real tasks. (a) Only the brief reached the harness, so a
+    brief that forgot to name `$DOG_WALKER_RESULT_PATH` turned a correct answer into a `failed`
+    task with no result. The launcher now appends one fixed line to the brief it passes
+    (`launch::prompt`); the handover still records the brief as written. Leaving it to the main
+    harness's instructions was rejected: the failure is silent and costs a paid run.
+    (b) The Claude adapter demanded `ANTHROPIC_API_KEY`, so a subscription token needed a `command`
+    that copied the adapter's argv. It now requires nothing, like Pi: the profile lists its own
+    credential (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`) in `env` and `secrets`. A profile
+    that relied on the adapter adding the key must now list it.

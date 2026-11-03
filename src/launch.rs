@@ -33,6 +33,17 @@ use crate::task::Task;
 pub const TASK_DIR: &str = "DOG_WALKER_TASK_DIR";
 /// Where the harness writes its result.
 pub const RESULT_PATH: &str = "DOG_WALKER_RESULT_PATH";
+/// What the harness is told after the brief, whatever the brief says: where its result goes.
+/// Nothing else tells it, and a missing result file fails a task that answered correctly.
+/// The handover records the brief as written, without this.
+const RESULT_FOOTER: &str = "Write your result to the file named by the environment variable \
+$DOG_WALKER_RESULT_PATH (read it with a shell), and nowhere else.";
+
+/// The text the harness receives as its last argument: the brief, then the result footer.
+pub fn prompt(brief: &str) -> String {
+    format!("{}\n\n{RESULT_FOOTER}", brief.trim_end())
+}
+
 /// The handover the main harness reads; the secondary must not write it.
 pub const HANDOVER_PATH: &str = "DOG_WALKER_HANDOVER_PATH";
 /// The number of the task, as printed in the handover.
@@ -382,6 +393,15 @@ static INTERRUPTED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_prompt_is_the_brief_then_where_the_result_goes() {
+        let text = super::prompt("Do it.\n\n");
+        assert!(text.starts_with("Do it.\n\nWrite your result"), "{text}");
+        assert!(text.contains("$DOG_WALKER_RESULT_PATH"), "{text}");
+        // A brief that already says it is not trusted to: the footer is always there.
+        assert!(super::prompt("x").ends_with("and nowhere else."));
+    }
+
     use super::*;
 
     use std::fs;

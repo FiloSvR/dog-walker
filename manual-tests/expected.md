@@ -32,11 +32,10 @@ change to tracked files.
 
 ## 03-no-result-path
 
-- Exit code 1 and `status = "failed"`.
-- The Result section says `the harness left no result` and gives the harness's exit status.
-- `harness.log` holds the worker's answer ("hello"); there is no `result.md`.
-- This is the known cost of the contract: the brief must name `$DOG_WALKER_RESULT_PATH`
-  (`dog-walker instructions`, "Where to answer").
+- Exit code 0 and `status = "done"`, although the brief never names the result file: dog-walker
+  appends the instruction itself (D14).
+- The handover's Brief is exactly the text of the brief file, without the added line; the Result
+  is the worker's answer ("hello").
 
 ## 04-review-worker-diff
 

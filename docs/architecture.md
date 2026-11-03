@@ -67,8 +67,9 @@ regular file, so a link or a pipe there is refused, not read (`at16_a_symlinked_
 ## The harness environment
 
 The harness is the profile's `command` or its harness's adapter argv (see "Adapters"), an argv
-list with the brief appended as its last argument, started in the project directory, with
-stdin closed and its output in `harness.log`.
+list with the prompt appended as its last argument (the brief, then a fixed line naming
+`$DOG_WALKER_RESULT_PATH`, D14; the handover records the brief alone), started in the project
+directory, with stdin closed and its output in `harness.log`.
 It reads, from the environment:
 
 - `DOG_WALKER_TASK_DIR`, `DOG_WALKER_HANDOVER_PATH`, `DOG_WALKER_RESULT_PATH`, `DOG_WALKER_TASK_ID`;
@@ -168,15 +169,15 @@ harness program that does not resolve is refused before a task exists. Adding an
 `adapter` and the contract test, nothing else; a new harness also needs its `Harness` variant,
 and a harness that boots a profile of its own (dsh) adds a validated key beside `command`.
 
-The launcher appends the brief with `adapter::with_brief`, so "the brief is the last argument"
-is one rule, and it resolves the program once: the check and the run use the same absolute
+The launcher appends the prompt (`launch::prompt`: the brief and the result footer) with
+`adapter::with_brief`, so "the prompt is the last argument" is one rule, and it resolves the program once: the check and the run use the same absolute
 path. The environment is the profile's names plus the adapter's, deduplicated, and a profile
 with its own `command` does not get the adapter's names — it is not running the adapter.
 
 `tests/adapter_contract.rs` is the shared contract, run against a stub of the harness on
 `PATH` (through the real CLI) and against a fake adapter written in the test: the program
 resolves, the model and the effort reach the argv (or, for dsh, the dsh profile it names), the
-brief is exactly the last argument, stdin is closed so the harness cannot prompt, and the
+prompt (the brief, then the result footer) is exactly the last argument, stdin is closed so the harness cannot prompt, and the
 result reaches the handover.
 
 The adapters are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`),
@@ -199,17 +200,15 @@ the directory through it. `--no-session` stops Pi making a session there, and wi
 directory it still tries to lock `settings.json` to read it, logs a warning and falls back to
 its defaults: a profile that needs those settings gives Pi a writable agent directory instead.
 
-A Claude Code profile with a subscription (no API key). The adapter always puts
-`ANTHROPIC_API_KEY` in the environment and `run` refuses when it is unset, so a profile that
-authenticates with a subscription token sets `command` instead (a profile with its own `command`
-does not get the adapter's names) and spells out the adapter's arguments. Steps, in
-`docs/setup.md`: run `claude setup-token` yourself and keep the token in a mode 600
-file outside the repo; list `CLAUDE_CODE_OAUTH_TOKEN` in `env` and `secrets`; give Claude Code a
-private, empty `CLAUDE_CONFIG_DIR` in `writable_dirs` (so it cannot read `~/.claude`), its install
-directory (`~/.local/share/claude`) in `read_only_dirs`, and a temp directory inside that
-writable directory through `CLAUDE_CODE_TMPDIR` and `TMPDIR`, since the sandbox mounts no
-`/tmp` and Claude Code fails with `EROFS … mkdir '/tmp'` without one. All of these variables are
-forwarded by name, so they must be set in the shell that runs `dog-walker`.
+A Claude Code profile names its own credential, like Pi's provider key: the adapter requires no
+variable (D14), so `ANTHROPIC_API_KEY` or, for a subscription, `CLAUDE_CODE_OAUTH_TOKEN` goes in
+the profile's `env` and `secrets`. Steps, in `docs/setup.md`: run `claude setup-token` yourself and
+keep the token in a mode 600 file outside the repo; give Claude Code a private, empty
+`CLAUDE_CONFIG_DIR` in `writable_dirs` (so it cannot read `~/.claude`), its install directory
+(`~/.local/share/claude`) in `read_only_dirs`, and a temp directory inside that writable directory
+through `CLAUDE_CODE_TMPDIR` and `TMPDIR`, since the sandbox mounts no `/tmp` and Claude Code
+fails with `EROFS … mkdir '/tmp'` without one. All of these variables are forwarded by name, so
+they must be set in the shell that runs `dog-walker`.
 
 Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
 `at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`, `at28_the_pi_adapter_meets_the_contract`,
