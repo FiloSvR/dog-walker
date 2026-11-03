@@ -153,6 +153,27 @@ fn the_exemptions_are_exact_paths() {
         Path::new("/repo/src/sub/handover.rs"),
         "handover.rs"
     ));
+    // The launcher and the slots own a file of their own too, and only at the top level.
+    assert!(is_top_level(
+        src,
+        Path::new("/repo/src/launch.rs"),
+        "launch.rs"
+    ));
+    assert!(is_top_level(
+        src,
+        Path::new("/repo/src/slots.rs"),
+        "slots.rs"
+    ));
+    assert!(!is_top_level(
+        src,
+        Path::new("/repo/src/sub/launch.rs"),
+        "launch.rs"
+    ));
+    assert!(!is_top_level(
+        src,
+        Path::new("/repo/src/sub/slots.rs"),
+        "slots.rs"
+    ));
     assert!(!is_top_level(
         src,
         Path::new("/repo/src/sub/main.rs"),

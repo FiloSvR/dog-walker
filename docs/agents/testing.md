@@ -16,7 +16,8 @@ a stub `gh` and the real `jq`.
 The fake harness is a small script that a test writes and a profile's `command` points at:
 its first argument is the behaviour (write a result, write a malformed one, do nothing, hang —
 it writes its pid and its child's into `pids` — edit the handover, try a write outside the
-project, a connection, git, reading and writing listed directories, or print a secret) and the brief arrives
+project, a connection, git, reading and writing listed directories, print a secret, call `run`
+again, or hold until a `release` file appears for the concurrency tests) and the brief arrives
 as its last argument, so `tests/run.rs` exercises the
 same launcher a user configures. It is not part of the binary, and there are no test-only
 variants in it.
