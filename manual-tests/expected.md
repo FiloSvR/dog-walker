@@ -1,0 +1,39 @@
+# Expected results
+
+Replace `<task>` with the folder printed by `run`. "Clean" means `git status --short` shows no
+change to tracked files.
+
+## 01-readonly-review
+
+- Exit code 0; stderr ends `task NNNN done`.
+- `handover.md`: `status = "done"`; the Sandbox section lists `OPENROUTER_API_KEY` under secrets
+  as `(redacted)`; the Brief is the file's text; the Result is `result.md`'s text.
+- The result summarises both files and names one improvement with a file and line.
+  (At the time of writing: a `Status::ALL` constant in `src/status.rs`. The model may pick
+  another; any concrete one is fine.)
+- Repo clean; no stray file written outside `.dog-walker/`.
+
+## 02-sandbox-probe
+
+- Exit code 0 and `status = "done"`: denials are the thing being reported, not a failure.
+- Step 1 succeeds, and `probe-scratch.txt` exists in the repo afterwards (delete it).
+- Steps 2 and 3 fail with `Read-only file system` (the sandbox mounts neither `$HOME` nor a
+  writable `/etc`). Nothing appears at either path on the host.
+- Step 4: `git add` and `git commit` fail with `Unable to create '.git/index.lock': Read-only
+  file system` (`.git` is read-only by default). `git log` and `git diff --stat` work.
+  `git log` on the host shows no `probe` commit.
+- Step 6: the handover's Result shows `[redacted]` where the key is, and so does
+  `harness.log`; `grep -c "$OPENROUTER_API_KEY" <task>/*` is 0 for both. `result.md` is the
+  harness's own file and is not redacted by design, so it may hold the value: it does not
+  leave the task folder, which `.gitignore` covers. The environment names are `HOME`, `PATH`,
+  the profile's `env` names, `DOG_WALKER_*` and whatever the harness itself exports (Pi adds
+  `PI_*`, `AI_AGENT`); none of your other shell variables.
+- Clean up: delete `probe-scratch.txt`.
+
+## 03-no-result-path
+
+- Exit code 1 and `status = "failed"`.
+- The Result section says `the harness left no result` and gives the harness's exit status.
+- `harness.log` holds the worker's answer ("hello"); there is no `result.md`.
+- This is the known cost of the contract: the brief must name `$DOG_WALKER_RESULT_PATH`
+  (`dog-walker instructions`, "Where to answer").
