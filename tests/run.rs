@@ -116,6 +116,8 @@ case $mode in
     {
       printf 'log: %s\n' "$(status git log --oneline -1)"
       printf 'diff: %s\n' "$(status git diff --stat)"
+      # Something of its own to commit: the task records are ignored by git (D15).
+      echo change > committed-by-harness.txt
       printf 'add: %s\n' "$(status git add .)"
       printf 'commit: %s\n' "$(status git -c user.name=a -c user.email=a@b commit -m sandbox --no-gpg-sign)"
       printf 'push: %s\n' "$(status git push "$DOG_WALKER_TASK_DIR/../../../../outside.git" HEAD:refs/heads/main)"
