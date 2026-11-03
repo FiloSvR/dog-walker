@@ -123,6 +123,15 @@ case $mode in
     printf 'a log line with %s\n' "${PROFILE_SECRET:-<unset>}" >&2
     printf 'a raw byte: \377\n' >&2
     ;;
+  delegate)
+    {
+      nested=$("$TEST_BIN" --config "$TEST_CONFIG" run alpha "A task of its own." 2>&1)
+      printf 'nested: %s\n%s\n' "$?" "$nested"
+      # The marker can be cleared by a harness; the ancestry cannot.
+      cleared=$(env -u DOG_WALKER_TASK_DIR "$TEST_BIN" --config "$TEST_CONFIG" run alpha "Cleared." 2>&1)
+      printf 'cleared: %s\n%s\n' "$?" "$cleared"
+    } > "$result"
+    ;;
   env-report)
     printf 'host: %s\n' "${HOST_SECRET:-<unset>}" > "$result"
     ;;
@@ -1841,6 +1850,40 @@ fn at4_a_task_request_may_only_tighten() {
         assert!(stderr(&out).contains("maybe"), "{flag}: {}", stderr(&out));
         assert!(!fixture.tasks().exists());
     }
+}
+
+// AT9 (R8): a task cannot start tasks: a harness that calls `run` is refused, with its
+// environment as it is and with the marker cleared, and its own task finishes untouched.
+#[test]
+fn at9_a_task_cannot_start_tasks() {
+    let fixture = Fixture::with_policy("at9", "delegate", "env = [\"TEST_BIN\", \"TEST_CONFIG\"]");
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing.", "--unsandboxed"])
+        .current_dir(&fixture.project)
+        .env("TEST_BIN", env!("CARGO_BIN_EXE_dog-walker"))
+        .env("TEST_CONFIG", &fixture.config)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"done\""), "{handover}");
+    assert!(handover.contains("nested: 2"), "{handover}");
+    assert!(handover.contains("cleared: 2"), "{handover}");
+    assert!(handover.contains("a task cannot start tasks"), "{handover}");
+    // The nested calls made no task of their own, and took no id.
+    let folders = fs::read_dir(fixture.tasks())
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .count();
+    assert_eq!(folders, 1);
+    let markers = fs::read_dir(fixture.project.join(".dog-walker").join("ids"))
+        .unwrap()
+        .flatten()
+        .count();
+    assert_eq!(markers, 1);
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them.

@@ -71,14 +71,22 @@ It reads, from the environment:
 - `DOG_WALKER_TASK_DIR`, `DOG_WALKER_HANDOVER_PATH`, `DOG_WALKER_RESULT_PATH`, `DOG_WALKER_TASK_ID`;
 - `DOG_WALKER_PROFILE`, `DOG_WALKER_MODEL`, and `DOG_WALKER_EFFORT` when the profile sets one.
 
-Adapters (#10) will build that command line from the profile; until then a profile needs a
-`command` to run, and `run` says so before it creates a task. Inside the sandbox the
+`DOG_WALKER_TASK_DIR` is also the marker that stops delegation from going back: a `run` whose
+environment carries it (and the directory it names exists) refuses before it reads a brief or
+creates a folder, and so does a `run` with a dog-walker somewhere above it in the process
+tree, which a harness cannot clear from its own environment (R8). The task that called it goes
+on. Inside the sandbox the harness has a PID namespace of its own, so the ancestry is not
+visible there and only the marker holds; a harness that clears the variable and can reach a
+dog-walker binary can still delegate (D12). Adapters (#10) will build
+that command line from the profile; until then a profile needs a `command` to run, and `run`
+says so before it creates a task. Inside the sandbox the
 environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the
 sandbox it is inherited, and the handover says so. A profile can also name the variables whose
 values are secrets (`secrets`): those values are replaced with `[redacted]` in the handover and
 in `harness.log` once the run ends (R18), and the handover lists the names, never the values.
 
-Checks: `at1_*`, `at6_*`, `at7_*`, `at9_a_task_cannot_start_tasks`, `at16_a_harness_that_cannot_start_fails_the_task`, `at23_*`. A
+Checks: `at1_*`, `at6_*`, `at7_*`, `at9_a_task_cannot_start_tasks`,
+`at16_a_harness_that_cannot_start_fails_the_task`, `at23_*`. A
 harness that ends with a non-zero status is a failed task, even when it left a result
 (`at16_a_nonzero_exit_is_a_failure`), and the handover path is printed as soon as the handover
 exists, so a failure to write the end state still leaves it on stdout
