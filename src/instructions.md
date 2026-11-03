@@ -31,8 +31,9 @@ A Codex profile's model is a Codex model (`gpt-5-codex`), its effort a `model_re
 `writable_dirs`, with its key in `env`; `--ephemeral` keeps session files out of it.
 
 A dsh profile names the dsh profile to boot with `dsh_profile` (`headless` is the shipped
-one-task profile and the default); dsh's model and tools live in that profile, so the profile's
-`model` is only a label there. Its sandbox needs dsh's install directory in `read_only_dirs`
+one-task profile and the default); dsh's model and tools live in that profile, so `model` and
+`effort` are only labels there. Its answer goes to stdout: the brief must tell it to write the
+result to `$DOG_WALKER_RESULT_PATH`, as every harness's brief does. Its sandbox needs dsh's install directory in `read_only_dirs`
 and `HOME` (the adapter declares it); a custom `DSH_HOME` also goes in `env`, and the directory
 it names (default `$HOME/.dsh`) in `writable_dirs`, as does dsh's provider key in `env`.
 

@@ -659,6 +659,7 @@ mod tests {
             ("dsh_profile='-h'", "cannot start with"),
             ("dsh_profile=''", "must not be empty"),
             ("dsh_profile='bad name'", "dsh_profile"),
+            ("dsh_profile='node_modules'", "node_modules"),
         ] {
             let text = if expected == "only for" {
                 format!("[profiles.a]\nharness='pi'\nmodel='m'\nmain=true\n{extra}\n")

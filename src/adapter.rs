@@ -2,7 +2,8 @@
 //!
 //! A profile that sets `command` runs exactly that argv; a profile that does not asks its
 //! harness's adapter. An adapter for a harness the core knows touches this module and nothing
-//! else: the launcher and the sandbox only ever see an argv and a list of variable names.
+//! else: the launcher and the sandbox only ever see an argv and a list of variable names. (A
+//! harness that boots a profile of its own, like dsh, also adds a validated profile key.)
 
 use std::ffi::OsString;
 
@@ -123,11 +124,11 @@ impl Adapter for Codex {
     }
 }
 
-/// dsh, run unattended: `dsh <dsh_profile> -- <brief>`.
+/// dsh, run unattended: `dsh --profile <dsh_profile> -- -- <brief>`.
 ///
 /// dsh boots one of the user's profiles, and `headless` is the shipped one that answers a task
 /// and exits; the model and the tools live in that profile, not in an argv flag, which is what
-/// `dsh_profile` names.
+/// `dsh_profile` names. The launcher takes the first `--`, so the app gets a second one.
 pub struct Dsh;
 
 impl Adapter for Dsh {
@@ -136,7 +137,15 @@ impl Adapter for Dsh {
             .dsh_profile
             .as_ref()
             .map_or("headless", |name| name.as_str());
-        vec!["dsh".into(), "--profile".into(), name.into(), "--".into()]
+        // dsh's launcher consumes the first `--` itself, so the app needs a second one to see
+        // a brief that starts with a dash as a brief.
+        vec![
+            "dsh".into(),
+            "--profile".into(),
+            name.into(),
+            "--".into(),
+            "--".into(),
+        ]
     }
 
     fn env(&self) -> &'static [&'static str] {
@@ -349,7 +358,11 @@ mod tests {
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(printed, ["dsh", "--profile", "rescue", "--"], "{printed:?}");
+        assert_eq!(
+            printed,
+            ["dsh", "--profile", "rescue", "--", "--"],
+            "{printed:?}"
+        );
         assert_eq!(env(&dsh), ["HOME"]);
         let full = with_brief(&argv(&dsh).unwrap(), "- fix it");
         assert_eq!(
@@ -357,9 +370,11 @@ mod tests {
             Some("- fix it".to_owned())
         );
         // Without the key, the shipped one-task profile is the default.
-        let mut bare = profile(Harness::Dsh, "deepseek");
-        bare.dsh_profile = None;
-        assert_eq!(argv(&bare).unwrap(), ["dsh", "--profile", "headless", "--"]);
+        let bare = profile(Harness::Dsh, "deepseek");
+        assert_eq!(
+            argv(&bare).unwrap(),
+            ["dsh", "--profile", "headless", "--", "--"]
+        );
     }
 
     #[test]

@@ -76,8 +76,8 @@ pub fn launch(
 ) -> Result<End, LaunchError> {
     // The folder must still be the one that was created before anything is written in it.
     task.verify()?;
-    // The argv comes from the profile's command or its adapter; a harness without either
-    // fails here, before a log exists.
+    // The argv comes from the profile's command or its adapter; an adapter that returns no
+    // argv fails here, before a log exists.
     crate::adapter::argv(profile)?;
     let log = File::create_new(task.log_path()).map_err(|source| LaunchError::Log {
         path: task.log_path(),
