@@ -112,6 +112,9 @@ case $mode in
     {
       nested=$("$TEST_BIN" --config "$TEST_CONFIG" run alpha "A task of its own." 2>&1)
       printf 'nested: %s\n%s\n' "$?" "$nested"
+      # The marker can be cleared by a harness; the ancestry cannot.
+      cleared=$(env -u DOG_WALKER_TASK_DIR "$TEST_BIN" --config "$TEST_CONFIG" run alpha "Cleared." 2>&1)
+      printf 'cleared: %s\n%s\n' "$?" "$cleared"
     } > "$result"
     ;;
   env-report)
@@ -1454,6 +1457,7 @@ fn at9_a_task_cannot_start_tasks() {
     let handover = fixture.handover();
     assert!(handover.contains("status = \"done\""), "{handover}");
     assert!(handover.contains("nested: 2"), "{handover}");
+    assert!(handover.contains("cleared: 2"), "{handover}");
     assert!(handover.contains("a task cannot start tasks"), "{handover}");
     // The nested call made no task of its own.
     let folders = fs::read_dir(fixture.tasks())
@@ -1462,6 +1466,11 @@ fn at9_a_task_cannot_start_tasks() {
         .filter(|entry| entry.path().is_dir())
         .count();
     assert_eq!(folders, 1);
+    let markers = fs::read_dir(fixture.project.join(".dog-walker").join("ids"))
+        .unwrap()
+        .flatten()
+        .count();
+    assert_eq!(markers, 1);
 }
 
 /// Whether no process on the host is running `path`: inside a PID namespace the harness sees

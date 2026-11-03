@@ -202,9 +202,11 @@ fn run_task(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<u8, Error> {
-    // A task is not a delegator (R8): its harness gets the marker, and a `run` from inside it
-    // stops here, before a brief is read or a task exists. The task that spawned it goes on.
-    if std::env::var_os(launch::TASK_DIR).is_some() {
+    // A task is not a delegator (R8): a `run` from inside one stops here, before a brief is
+    // read or a task exists, and the task that spawned it goes on. Two signals: the marker the
+    // harness gets, and a dog-walker ancestor, which a harness cannot clear from its own
+    // environment. A marker that points nowhere is a stray export, not a task.
+    if inside_a_task() {
         return Err(CliError::Nested {
             variable: launch::TASK_DIR,
         }
@@ -298,6 +300,37 @@ fn run_task(
     } else {
         exit::TASK_NOT_DONE
     })
+}
+
+/// Whether this process runs inside a task: the marker names a directory, or an ancestor is a
+/// dog-walker.
+fn inside_a_task() -> bool {
+    let marker = std::env::var_os(launch::TASK_DIR).is_some_and(|dir| Path::new(&dir).is_dir());
+    if marker {
+        return true;
+    }
+    let mut pid = std::process::id();
+    for _ in 0..16 {
+        let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+            return false;
+        };
+        let Some(parent) = status
+            .lines()
+            .find_map(|line| line.strip_prefix("PPid:"))
+            .and_then(|value| value.trim().parse::<u32>().ok())
+        else {
+            return false;
+        };
+        if parent == 0 {
+            return false;
+        }
+        let comm = std::fs::read_to_string(format!("/proc/{parent}/comm")).unwrap_or_default();
+        if comm.trim() == "dog-walker" {
+            return true;
+        }
+        pid = parent;
+    }
+    false
 }
 
 /// Saves the handover, once the task folder is still the one that was created.

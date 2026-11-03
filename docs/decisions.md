@@ -76,3 +76,13 @@ real trade-off. Discussion is on the issue named at the end of each entry.
    the project or a writable directory gives write access back and is refused. Rejected:
    merging the lists, which would let a repository grant itself access to the machine.
    Discussion: issue #6.
+
+12. **The delegation guard is cooperative, and the ancestry check is what makes it hold**
+    (D12, 2026-11-03). A `run` refuses when `DOG_WALKER_TASK_DIR` names an existing directory or
+    when an ancestor process is a dog-walker. The variable is what a harness can clear, so on
+    its own it is a reminder, not a barrier; the ancestry is outside the harness's control, but
+    a harness that detaches into its own session and clears the variable can still delegate.
+    Rejected: a harder mechanism (a secret fd, a lock held by the runner) that a harness can
+    also drop, at the cost of a second channel to keep in sync. The requirement is read as "a
+    secondary is not a delegator by default", and the guard is what a well-behaved harness and
+    a wrapper meet. Discussion: issue #9.

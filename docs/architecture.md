@@ -69,9 +69,12 @@ It reads, from the environment:
 - `DOG_WALKER_TASK_DIR`, `DOG_WALKER_HANDOVER_PATH`, `DOG_WALKER_RESULT_PATH`, `DOG_WALKER_TASK_ID`;
 - `DOG_WALKER_PROFILE`, `DOG_WALKER_MODEL`, and `DOG_WALKER_EFFORT` when the profile sets one.
 
-Those variables are also the marker that stops delegation from going back: a `run` that finds
-`DOG_WALKER_TASK_DIR` in its own environment is inside a task, so it refuses before it reads a
-brief or creates a folder (R8), and the task that called it goes on. Adapters (#10) will build
+`DOG_WALKER_TASK_DIR` is also the marker that stops delegation from going back: a `run` whose
+environment carries it (and the directory it names exists) refuses before it reads a brief or
+creates a folder, and so does a `run` with a dog-walker somewhere above it in the process
+tree, which a harness cannot clear from its own environment (R8). The task that called it goes
+on. A harness that both clears the variable and leaves the process tree can still delegate:
+the marker is cooperative, the ancestry is not (D12). Adapters (#10) will build
 that command line from the profile; until then a profile needs a `command` to run, and `run`
 says so before it creates a task. Inside the sandbox the
 environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the
