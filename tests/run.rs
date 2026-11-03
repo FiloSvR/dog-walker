@@ -108,6 +108,12 @@ case $mode in
       printf 'push: %s\n' "$(status git push "$DOG_WALKER_TASK_DIR/../../../../outside.git" HEAD:refs/heads/main)"
     } > "$result"
     ;;
+  delegate)
+    {
+      nested=$("$TEST_BIN" --config "$TEST_CONFIG" run alpha "A task of its own." 2>&1)
+      printf 'nested: %s\n%s\n' "$?" "$nested"
+    } > "$result"
+    ;;
   env-report)
     printf 'host: %s\n' "${HOST_SECRET:-<unset>}" > "$result"
     ;;
@@ -1428,6 +1434,34 @@ fn at17_a_timeout_inside_the_sandbox_cleans_up() {
         no_process_runs(&fixture.dir.path().join("fake.sh")),
         "the sandbox tree is still running"
     );
+}
+
+// AT9 (R8): a task cannot start tasks: a harness that calls `run` is refused, and its own
+// task finishes untouched.
+#[test]
+fn at9_a_task_cannot_start_tasks() {
+    let fixture = Fixture::with_policy("at9", "delegate", "env = [\"TEST_BIN\", \"TEST_CONFIG\"]");
+    let out = binary()
+        .arg("--config")
+        .arg(&fixture.config)
+        .args(["run", "alpha", "Do the thing.", "--unsandboxed"])
+        .current_dir(&fixture.project)
+        .env("TEST_BIN", env!("CARGO_BIN_EXE_dog-walker"))
+        .env("TEST_CONFIG", &fixture.config)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    assert!(handover.contains("status = \"done\""), "{handover}");
+    assert!(handover.contains("nested: 2"), "{handover}");
+    assert!(handover.contains("a task cannot start tasks"), "{handover}");
+    // The nested call made no task of its own.
+    let folders = fs::read_dir(fixture.tasks())
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .count();
+    assert_eq!(folders, 1);
 }
 
 /// Whether no process on the host is running `path`: inside a PID namespace the harness sees

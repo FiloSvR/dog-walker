@@ -69,12 +69,16 @@ It reads, from the environment:
 - `DOG_WALKER_TASK_DIR`, `DOG_WALKER_HANDOVER_PATH`, `DOG_WALKER_RESULT_PATH`, `DOG_WALKER_TASK_ID`;
 - `DOG_WALKER_PROFILE`, `DOG_WALKER_MODEL`, and `DOG_WALKER_EFFORT` when the profile sets one.
 
-Adapters (#10) will build that command line from the profile; until then a profile needs a
-`command` to run, and `run` says so before it creates a task. Inside the sandbox the
+Those variables are also the marker that stops delegation from going back: a `run` that finds
+`DOG_WALKER_TASK_DIR` in its own environment is inside a task, so it refuses before it reads a
+brief or creates a folder (R8), and the task that called it goes on. Adapters (#10) will build
+that command line from the profile; until then a profile needs a `command` to run, and `run`
+says so before it creates a task. Inside the sandbox the
 environment is cleared and rebuilt from the profile's `env` names plus `PATH`; without the
 sandbox it is inherited, and the handover says so. Redacting secret values is #8.
 
-Checks: `at1_*`, `at6_*`, `at7_*`, `at16_a_harness_that_cannot_start_fails_the_task`. A
+Checks: `at1_*`, `at6_*`, `at7_*`, `at9_a_task_cannot_start_tasks`,
+`at16_a_harness_that_cannot_start_fails_the_task`. A
 harness that ends with a non-zero status is a failed task, even when it left a result
 (`at16_a_nonzero_exit_is_a_failure`), and the handover path is printed as soon as the handover
 exists, so a failure to write the end state still leaves it on stdout

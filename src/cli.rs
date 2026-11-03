@@ -202,6 +202,14 @@ fn run_task(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<u8, Error> {
+    // A task is not a delegator (R8): its harness gets the marker, and a `run` from inside it
+    // stops here, before a brief is read or a task exists. The task that spawned it goes on.
+    if std::env::var_os(launch::TASK_DIR).is_some() {
+        return Err(CliError::Nested {
+            variable: launch::TASK_DIR,
+        }
+        .into());
+    }
     let config = load(cli)?;
     let profile = config
         .profiles()

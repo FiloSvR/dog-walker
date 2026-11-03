@@ -156,6 +156,11 @@ pub enum CliError {
     TaskFile { path: PathBuf, source: io::Error },
     #[error("cannot read the task from stdin: {source}")]
     Stdin { source: io::Error },
+    #[error(
+        "a task cannot start tasks: `run` was called from inside one (`{variable}` is set); \
+         run it from your own shell"
+    )]
+    Nested { variable: &'static str },
     #[error("cannot find the project directory: {source}")]
     Project { source: io::Error },
     #[error("`{id}` is not a task id: it is the number in a task folder's name")]

@@ -28,6 +28,9 @@ profile can cut the network (`network = false`) and make `.git` writable
 (`git = "writable"`). If bwrap is missing, `run` refuses; `--unsandboxed` runs without it and
 the handover says so.
 
+A task cannot start tasks of its own: a `run` called from inside one is refused, and the task
+that called it is unaffected.
+
 A repository can tighten the policy in `.dog-walker/config.toml` (the same keys: `network`,
 `git`, `read_only_dirs`, `writable_dirs`, `env`), and a task can tighten `network` and `git`
 with `--network off` and `--git read-only`. Neither can loosen what the profile allows: a
