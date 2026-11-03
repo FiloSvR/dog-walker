@@ -274,3 +274,11 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     locking files (a harness writes through its own tools, so dog-walker cannot see a write
     until it is done). Not done: a command to list or remove worktrees (`git worktree list`
     and `remove` do it), and the checkout's uncommitted changes in the worktree.
+
+D24. **The sandbox is a config setting.** A top-level `sandbox = true|false` in the config
+    (default true) decides whether tasks run in bwrap, so someone who always runs without it
+    does not pass `--unsandboxed` every time. The config in use wins (the project's, D20); when
+    it is silent the global one is used; `--unsandboxed` only adds to this, and there is no flag
+    to force the sandbox on over a config that turns it off. The repository's
+    `.dog-walker/config.toml` cannot set it (R3: it may only tighten). The handover records an
+    unsandboxed run as before. `doctor` follows the same setting.

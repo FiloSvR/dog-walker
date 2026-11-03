@@ -363,6 +363,7 @@ fn doctor(
             .map_err(|source| CliError::Project { source })?;
     adopt_env_file(cli, profile.name.as_str())?;
     let env_file = env_file_of(cli, profile.name.as_str())?;
+    let unsandboxed = unsandboxed || sandbox_off_by_config(cli, &config)?;
     let checks = crate::doctor::diagnose(profile, &project, url, unsandboxed, env_file.as_deref());
     for check in &checks {
         output::line(stdout, &check.line())?;
@@ -384,6 +385,22 @@ fn config_path(cli: &Cli) -> Result<PathBuf, ConfigError> {
     Ok(project_config_path(&global)
         .filter(|path| path.is_file())
         .unwrap_or(global))
+}
+
+/// Whether tasks run without the sandbox because a config says so: the config in use, else the
+/// global one, else no. The command line's `--unsandboxed` is separate, and only adds to this.
+fn sandbox_off_by_config(cli: &Cli, config: &Config) -> Result<bool, ConfigError> {
+    if let Some(sandbox) = config.sandbox() {
+        return Ok(!sandbox);
+    }
+    if cli.config.is_some() {
+        return Ok(false);
+    }
+    let global = global_config_path()?;
+    if config_path(cli)? == global || !global.is_file() {
+        return Ok(false);
+    }
+    Ok(Config::load(&global)?.sandbox() == Some(false))
 }
 
 fn global_config_path() -> Result<PathBuf, ConfigError> {
@@ -530,6 +547,7 @@ fn run_task(
     let project =
         fs::canonicalize(std::env::current_dir().map_err(|source| CliError::Project { source })?)
             .map_err(|source| CliError::Project { source })?;
+    let unsandboxed = unsandboxed || sandbox_off_by_config(cli, &config)?;
     let plan = plan_for(profile, &project, unsandboxed, request)?;
     // With `--worktree` the task gets a checkout of its own, made only now that the setup has
     // been checked: a refusal above leaves nothing behind (D23).
