@@ -84,4 +84,5 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     the names. Guessing by name suffix was rejected: it would either miss a secret with an
     unhelpful name (`env = ["TOKEN"]`) or shred ordinary output (`HOME`), and a list makes the
     decision the user's. The cost is that a value the harness invents or transforms is not
-    caught; the sandbox keeps it from the host, not from the log. Discussion: issue #8.
+    caught: the sandbox limits what the harness can read, not what it can print, and the
+    redaction only removes the exact values it was given. Discussion: issue #8.

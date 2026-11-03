@@ -282,6 +282,11 @@ impl Fixture {
         fs::read_to_string(path).unwrap()
     }
 
+    /// The harness's own result, as the harness left it.
+    fn result(&self) -> PathBuf {
+        self.tasks().join(self.only_task()).join("result.md")
+    }
+
     fn log(&self) -> String {
         let path = self.tasks().join(self.only_task()).join("harness.log");
         fs::read_to_string(path).unwrap()
@@ -1458,7 +1463,7 @@ fn at23_a_configured_secret_is_redacted() {
     let out = binary()
         .arg("--config")
         .arg(&fixture.config)
-        .args(["run", "alpha", "Do the thing."])
+        .args(["run", "alpha", "Use topsecret-123 here."])
         .current_dir(&fixture.project)
         .env("PROFILE_SECRET", "topsecret-123")
         .env("TEST_VALUE", "hello")
@@ -1466,6 +1471,16 @@ fn at23_a_configured_secret_is_redacted() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let handover = fixture.handover();
+    // The brief is redacted in the record and in the task folder's name.
+    assert!(handover.contains("Use [redacted] here."), "{handover}");
+    assert!(
+        !fixture.tasks().join("0001-use-topsecret-123-here").exists(),
+        "the slug carries the secret"
+    );
+    // The harness's own result file stays as the harness wrote it: R18 covers the handover
+    // and the log, and the result is the harness's output.
+    let result = fs::read_to_string(fixture.result()).unwrap();
+    assert!(result.contains("value: topsecret-123"), "{result}");
     assert!(handover.contains("saw: yes"), "{handover}");
     assert!(handover.contains("plain: hello"), "{handover}");
     assert!(handover.contains("value: [redacted]"), "{handover}");

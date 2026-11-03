@@ -249,11 +249,12 @@ fn run_task(
     let plan = Plan::from_policy(policy, &project, unsandboxed)?;
     // A sandbox that cannot be set up is a config error, not a failed task.
     plan.check(profile, &project)?;
-    let task = Task::create(&project, &brief)?;
-    let handover_path = task.handover_path();
-    // What the record keeps is redacted: the harness sees the brief as written (R18).
+    // What the record keeps is redacted, down to the folder's name: the harness reads the
+    // brief as written, and the task folder is dog-walker's (R18).
     let secrets = plan.policy().secret_values();
     let recorded = sandbox::redact(&brief, &secrets);
+    let task = Task::create(&project, &recorded)?;
+    let handover_path = task.handover_path();
     let mut handover = Handover::new(&task.id(), &profile.name, &recorded)
         .with_sandbox(&plan.policy().render(plan.sandboxed()));
     save(&handover, &task)?;

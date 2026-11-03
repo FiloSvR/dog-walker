@@ -109,7 +109,13 @@ impl Policy {
     /// What the handover says about the run, one bullet per line.
     pub fn render(&self, sandboxed: bool) -> String {
         if !sandboxed {
-            return "- tool: none (--unsandboxed)\n- network: not enforced\n- git: not enforced\n- directories: not enforced\n- environment: inherited, not cleaned".to_owned();
+            let mut text = "- tool: none (--unsandboxed)\n- network: not enforced\n- git: not enforced\n- directories: not enforced\n- environment: inherited, not cleaned".to_owned();
+            if !self.secrets.is_empty() {
+                text.push_str("\n- secrets: ");
+                text.push_str(&self.secrets.join(", "));
+                text.push_str(" (redacted)");
+            }
+            return text;
         }
         let list = |paths: &[PathBuf]| {
             if paths.is_empty() {
@@ -221,8 +227,14 @@ impl Request {
             git_writable,
             read_only_dirs,
             writable_dirs,
+            // A secret the effective environment no longer carries is not one to record.
+            secrets: parent
+                .secrets
+                .iter()
+                .filter(|name| env.contains(name))
+                .cloned()
+                .collect(),
             env,
-            secrets: parent.secrets.clone(),
         })
     }
 
