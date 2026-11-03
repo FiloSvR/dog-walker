@@ -466,9 +466,9 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
-    // Without a command there is nothing to start.
+    // Without a command and without an adapter there is nothing to start.
     #[test]
-    fn a_profile_without_a_command_is_an_error() {
+    fn a_profile_without_a_command_or_adapter_is_an_error() {
         let root = project("no-command");
         let task = Task::create(&root, "a brief").unwrap();
         let profile = profile(Vec::new());
