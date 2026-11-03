@@ -70,7 +70,9 @@ the environment variable *names* it receives (`env`; the values come from your s
 variables whose values are redacted from the handover and the log (`secrets`), and whether it
 has the network. A repository can tighten the policy in `.dog-walker/config.toml`; it cannot
 loosen what a profile allows. A task cannot start tasks of its own. If `bwrap` is missing, `run`
-refuses unless you pass `--unsandboxed`, and the handover then says so.
+refuses unless you pass `--unsandboxed`, and the handover then says so. To run without the
+sandbox every time, put `sandbox = false` at the top of the config (a project's own config wins
+over the global one; the default is `true`).
 
 ## Writing a good brief
 

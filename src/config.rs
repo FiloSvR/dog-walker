@@ -108,11 +108,14 @@ pub struct Config {
     profiles: Vec<Profile>,
     /// How many tasks of a harness and model may run at once, keyed `harness/model`.
     limits: BTreeMap<String, usize>,
+    /// `sandbox = false` in the file: run tasks without bwrap. `None` when the file is silent.
+    sandbox: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
+    sandbox: Option<bool>,
     #[serde(default)]
     profiles: BTreeMap<String, RawProfile>,
     #[serde(default)]
@@ -194,7 +197,13 @@ impl Config {
         Ok(Config {
             profiles,
             limits: raw.limits,
+            sandbox: raw.sandbox,
         })
+    }
+
+    /// Whether the file turns the sandbox on or off; `None` when it does not say.
+    pub fn sandbox(&self) -> Option<bool> {
+        self.sandbox
     }
 
     /// The profiles, the main one first.
