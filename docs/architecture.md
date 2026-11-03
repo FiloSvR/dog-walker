@@ -120,9 +120,11 @@ the profile says `git = "writable"` (D6); the network is there unless `network =
 adapter's) plus `PATH`.
 
 The policy reaches the handover as a `## Sandbox` section: the tool, the network setting, the
-git mode, the directories and the variable names (R20). A denial is an `EROFS` or `EACCES` in
-`harness.log`, and the policy recorded next to it is what makes it traceable: bwrap does not
-say which rule fired, and dog-walker does not invent one.
+git mode, the directories and the variable names (R20). When the adapter sets variables of its
+own, the section also names them with their values (`- set by the adapter: …`): dsh's
+`DSH_PERMISSION_MODE` changes what the harness may do, so the record must show it. A denial is
+an `EROFS` or `EACCES` in `harness.log`, and the policy recorded next to it is what makes it
+traceable: bwrap does not say which rule fired, and dog-walker does not invent one.
 
 Two limits are deliberate. The `DOG_WALKER_*` and allowlisted variable values travel in
 bwrap's argument list, which is world-readable on the host; a secret's value is redacted from
