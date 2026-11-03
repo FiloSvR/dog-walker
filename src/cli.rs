@@ -301,7 +301,9 @@ fn run_task(
         ),
     );
     let timeout = profile.timeout.unwrap_or(DEFAULT_TIMEOUT);
-    let (status, outcome) = match launch::launch(profile, &task, &project, &brief, timeout, &plan) {
+    let prompt = launch::prompt(&brief);
+    let (status, outcome) = match launch::launch(profile, &task, &project, &prompt, timeout, &plan)
+    {
         Ok(End::Exited(ended)) => outcome(&task, ended),
         Ok(End::TimedOut) => (
             Status::TimedOut,

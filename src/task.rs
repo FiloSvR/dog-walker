@@ -8,7 +8,7 @@
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::MetadataExt;
@@ -64,6 +64,7 @@ impl Task {
         reject_symlink(&ids)?;
         private_dirs(&tasks)?;
         private_dirs(&ids)?;
+        ignore_records(&root)?;
         let slug = slug(brief);
         let mut id = next_id(&tasks, &ids)?;
         loop {
@@ -219,6 +220,25 @@ fn reject_symlink(path: &Path) -> Result<(), TaskError> {
             path: path.to_owned(),
             source,
         }),
+    }
+}
+
+/// What `.dog-walker/.gitignore` holds: the records dog-walker keeps (handovers, results, logs,
+/// markers), and itself. `config.toml`, the project's policy, is not listed: it is meant to be
+/// committed.
+const IGNORED_RECORDS: &str = "/.gitignore\n/tasks/\n/ids/\n/run/\n";
+
+/// Keeps the records out of git without touching the project's own `.gitignore`: the first task
+/// writes `.dog-walker/.gitignore`. One that is already there, whatever it holds, is left alone,
+/// and a link in its place is not followed (`create_new` refuses it).
+fn ignore_records(root: &Path) -> Result<(), TaskError> {
+    let path = root.join(".gitignore");
+    match fs::File::create_new(&path) {
+        Ok(mut file) => file
+            .write_all(IGNORED_RECORDS.as_bytes())
+            .map_err(|source| TaskError::Create { path, source }),
+        Err(source) if source.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(source) => Err(TaskError::Create { path, source }),
     }
 }
 

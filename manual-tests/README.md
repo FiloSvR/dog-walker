@@ -40,7 +40,7 @@ From the repo root (a git repository; `.dog-walker/` is ignored):
 |---|---|
 | `01-readonly-review` | the happy path: a `done` task, a result in the handover, no source changed |
 | `02-sandbox-probe` | the sandbox from inside: project writes work, outside writes, `git commit` and a secret do not leak |
-| `03-no-result-path` | a brief that never names the result file ends `failed`, with the log kept |
+| `03-no-result-path` | a brief that never names the result file still ends `done`: the launcher adds it |
 | `04-review-worker-diff` | the full loop: a `reviewer` reviews a `worker`'s uncommitted change from its handover |
 
 If a test fails before the model answers, the cause is usually setup: `harness.log` says

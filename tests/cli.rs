@@ -185,9 +185,9 @@ fn at27_instructions_name_run_exit_code_and_handover() {
     assert!(text.contains("exit code"), "{text}");
     assert!(text.contains(".dog-walker/tasks"), "{text}");
     assert!(text.contains("handover.md"), "{text}");
-    // The brief must tell the secondary where its result goes: nothing else does.
+    // The main harness is told it need not name the result file: dog-walker adds it (D14).
     assert!(text.contains("DOG_WALKER_RESULT_PATH"), "{text}");
-    assert!(text.contains("Where to answer"), "{text}");
+    assert!(text.contains("adds one line after your brief"), "{text}");
 }
 
 /// Whether a missing sandbox must fail the sandbox tests instead of skipping them: true when

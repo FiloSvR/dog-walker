@@ -49,9 +49,10 @@ impl Adapter for ClaudeCode {
     }
 
     fn env(&self) -> &'static [&'static str] {
-        // Claude Code reads its key from the environment; its config directory is the
-        // profile's to list.
-        &["ANTHROPIC_API_KEY"]
+        // Nothing is required: Claude Code signs in with an API key or a subscription token
+        // (`CLAUDE_CODE_OAUTH_TOKEN`), and its config directory is the profile's to list, like
+        // its credential.
+        &[]
     }
 }
 
@@ -380,11 +381,15 @@ mod tests {
     #[test]
     fn the_variables_of_the_adapter_and_the_profile_both_count() {
         let mut profile = profile(Harness::Claude, "m");
-        profile.env = vec!["HOME".to_owned()];
-        // The adapter's own names come first, then the profile's; a name in both is one name.
-        assert_eq!(env(&profile), ["ANTHROPIC_API_KEY", "HOME"]);
-        profile.env = vec!["ANTHROPIC_API_KEY".to_owned(), "HOME".to_owned()];
-        assert_eq!(env(&profile), ["ANTHROPIC_API_KEY", "HOME"]);
+        profile.env = vec!["CLAUDE_CODE_OAUTH_TOKEN".to_owned()];
+        // Claude Code's adapter requires no credential: the profile names its own.
+        assert_eq!(env(&profile), ["CLAUDE_CODE_OAUTH_TOKEN"]);
+        // The adapter's own names come first, then the profile's; a name in both is one name
+        // (Pi's adapter names `HOME`).
+        let mut pi = profile.clone();
+        pi.harness = Harness::Pi;
+        pi.env = vec!["HOME".to_owned(), "OPENROUTER_API_KEY".to_owned()];
+        assert_eq!(env(&pi), ["HOME", "OPENROUTER_API_KEY"]);
         // A profile with its own `command` is not running the adapter: only its own names.
         profile.env = vec!["HOME".to_owned()];
         profile.command = Some(vec!["/bin/echo".to_owned()]);

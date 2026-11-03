@@ -8,9 +8,9 @@ this page has the steps.
 
 ## Claude Code with a subscription (no API key)
 
-The Claude Code adapter reads `ANTHROPIC_API_KEY` and `run` refuses when it is unset. With a
-Claude subscription there is no key, so the profile sets `command` instead (a profile with its
-own `command` does not get the adapter's variables) and authenticates with a token.
+The Claude Code adapter requires no credential: the profile lists the one it uses in `env`
+(and in `secrets`, so dog-walker redacts its value). With a subscription that is a token from
+`claude setup-token` instead of an API key.
 
 1. **Create a token**, in your own terminal (it needs your interactive login):
 
@@ -37,27 +37,26 @@ own `command` does not get the adapter's variables) and authenticates with a tok
        harness = "claude"
        model = "claude-sonnet-5-5"
        effort = "high"
-       command = ["claude", "-p", "--dangerously-skip-permissions", "--model", "claude-sonnet-5-5", "--effort", "high", "--"]
        env = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_TMPDIR", "TMPDIR", "HOME"]
        secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
        read_only_dirs = ["/home/you/.local/share/claude"]
        writable_dirs = ["/home/you/.config/dog-walker/claude-config"]
 
-   `command` repeats the adapter's arguments (`claude -p --dangerously-skip-permissions --model …
-   --effort … --`, the brief is appended last), so keep it in step with `src/adapter.rs`.
-   `secrets` makes dog-walker replace the token with `[redacted]` in the handover and the log.
+   The adapter builds the command (`claude -p --dangerously-skip-permissions --model … --effort …
+   --`, the brief last). `secrets` makes dog-walker replace the token with `[redacted]` in the
+   handover and the log.
 
 4. **Load the variables, then run**, in the same shell:
 
        set -a; . ~/.config/dog-walker/reviewer.env; set +a
-       dog-walker run reviewer "Reply ok. Write your result to the file named by \$DOG_WALKER_RESULT_PATH, and nowhere else."
+       dog-walker run reviewer "Reply with the word ok."
 
    The task should end `done` with `ok` in the handover. A tool that starts a fresh shell for
    every command (some agents do) must source the file in the same command as `dog-walker`.
 
 ### Why each piece is there
 
-- `command`: the adapter would refuse for want of `ANTHROPIC_API_KEY`.
+- `CLAUDE_CODE_OAUTH_TOKEN` in `env`: the credential; the adapter asks for none, so the profile does.
 - A private `CLAUDE_CONFIG_DIR` in `writable_dirs`: the sandbox does not mount your home, and
   this keeps Claude Code away from `~/.claude` (history, projects). It starts empty, so it is
   not signed in; the token does that.
@@ -68,8 +67,8 @@ own `command` does not get the adapter's variables) and authenticates with a tok
 
 ### With an API key instead
 
-Drop `command`, the token and the `TMPDIR` lines; list `ANTHROPIC_API_KEY` in `env` and
-`secrets`, and keep the install directory, `CLAUDE_CONFIG_DIR` and `writable_dirs`.
+Swap `CLAUDE_CODE_OAUTH_TOKEN` for `ANTHROPIC_API_KEY` in `env` and `secrets`, and in the file from
+step 2. Everything else stays: the install directory, `CLAUDE_CONFIG_DIR`, the temp variables.
 
 ### If it fails
 

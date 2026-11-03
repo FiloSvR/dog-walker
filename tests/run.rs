@@ -116,6 +116,8 @@ case $mode in
     {
       printf 'log: %s\n' "$(status git log --oneline -1)"
       printf 'diff: %s\n' "$(status git diff --stat)"
+      # Something of its own to commit: the task records are ignored by git (D15).
+      echo change > committed-by-harness.txt
       printf 'add: %s\n' "$(status git add .)"
       printf 'commit: %s\n' "$(status git -c user.name=a -c user.email=a@b commit -m sandbox --no-gpg-sign)"
       printf 'push: %s\n' "$(status git push "$DOG_WALKER_TASK_DIR/../../../../outside.git" HEAD:refs/heads/main)"
@@ -321,7 +323,20 @@ impl Fixture {
             .find(|entry| entry.file_name().to_string_lossy().starts_with(id))
             .unwrap_or_else(|| panic!("no task folder for {id}"))
             .path();
-        fs::read_to_string(folder.join("handover.md")).unwrap()
+        // The folder exists a moment before dog-walker writes the handover into it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match fs::read_to_string(folder.join("handover.md")) {
+                Ok(text) => return text,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("no handover in {}: {error}", folder.display()),
+            }
+        }
     }
 
     /// The harness's own result, as the harness left it.
@@ -482,6 +497,27 @@ fn at6_the_harness_gets_no_stdin() {
         "{}",
         fixture.handover()
     );
+}
+
+// AT6 (R5): the harness is told where its result goes, after the brief, whatever the brief says;
+// the handover records the brief as written, without it.
+#[test]
+fn at6_the_harness_is_told_where_to_write_its_result() {
+    let fixture = Fixture::new("at6-footer", "result");
+    let out = fixture.run(&["run", "alpha", "Fix the parser bug."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let handover = fixture.handover();
+    let (record, result) = handover.split_once("## Result").unwrap();
+    assert!(record.contains("Fix the parser bug."), "{handover}");
+    assert!(
+        !record.contains("DOG_WALKER_RESULT_PATH"),
+        "the record holds the brief as written: {handover}"
+    );
+    assert!(
+        result.contains("prompt: Fix the parser bug.\n\nWrite your result to the file named by"),
+        "{handover}"
+    );
+    assert!(result.contains("$DOG_WALKER_RESULT_PATH"), "{handover}");
 }
 
 // AT6 (R5): the brief can come from stdin, with `-`.
@@ -672,6 +708,32 @@ fn at13_ids_are_counters_and_gitignore_is_untouched() {
     names.sort();
     assert_eq!(names, ["0001-one", "0002-two", "0003-three"]);
     assert_eq!(fs::read_to_string(&gitignore).unwrap(), "custom-ignore\n");
+}
+
+// AT13 (R10): the records keep themselves out of git: the first task writes
+// `.dog-walker/.gitignore`, the project's own `.gitignore` is untouched, and the project's policy
+// file is not ignored. A `.gitignore` that is already there is left as it is.
+#[test]
+fn at13_the_records_ignore_themselves_in_git() {
+    let fixture = Fixture::new("at13-self-ignore", "result");
+    let out = fixture.run(&["run", "alpha", "One."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let ignore = fixture.project.join(".dog-walker/.gitignore");
+    let text = fs::read_to_string(&ignore).unwrap();
+    for line in ["/.gitignore", "/tasks/", "/ids/", "/run/"] {
+        assert!(text.lines().any(|l| l == line), "{line} missing: {text}");
+    }
+    assert!(
+        !text.contains("config.toml"),
+        "the policy is committed: {text}"
+    );
+    // The project's own file is not written.
+    assert!(!fixture.project.join(".gitignore").exists());
+    // A later task leaves it as it is, even if the user edited it.
+    fs::write(&ignore, "/tasks/\n").unwrap();
+    let out = fixture.run(&["run", "alpha", "Two."]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert_eq!(fs::read_to_string(&ignore).unwrap(), "/tasks/\n");
 }
 
 // AT14 (R11): the handover has front matter and the brief before the harness starts.
@@ -1467,8 +1529,8 @@ fn at17_a_timeout_inside_the_sandbox_cleans_up() {
     );
 }
 
-// AT23 (R18): a configured secret value is absent from the handover and the log, and the
-// harness still gets it.
+// AT23 (R18): a configured secret value is absent from the handover, the log and the result, and
+// the harness still gets it.
 #[test]
 fn at23_a_configured_secret_is_redacted() {
     if !sandbox_available("at23_a_configured_secret_is_redacted") {
@@ -1496,10 +1558,11 @@ fn at23_a_configured_secret_is_redacted() {
         !fixture.tasks().join("0001-use-topsecret-123-here").exists(),
         "the slug carries the secret"
     );
-    // The harness's own result file stays as the harness wrote it: R18 covers the handover
-    // and the log, and the result is the harness's output.
+    // The harness's own result file is redacted once the run is over, like the log: the task
+    // folder must be safe to copy or to commit by mistake (R18).
     let result = fs::read_to_string(fixture.result()).unwrap();
-    assert!(result.contains("value: topsecret-123"), "{result}");
+    assert!(result.contains("value: [redacted]"), "{result}");
+    assert!(!result.contains("topsecret-123"), "{result}");
     // The value the harness got is the exact one, not a placeholder.
     assert!(handover.contains("seen: exact"), "{handover}");
     assert!(handover.contains("plain: hello"), "{handover}");

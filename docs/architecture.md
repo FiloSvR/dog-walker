@@ -25,7 +25,7 @@ module; only `cli` turns them into a message and an exit code. Only `output` wri
 Invariants, each with the test that checks it:
 
 - A config has exactly one main profile and only known keys and harnesses: `at3_*` and `at2_*` in `tests/cli.rs`.
-- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()`, or importing them `as` another name, anywhere but `src/main.rs`; the top-level `src/output.rs` and `src/main.rs` are exempt, and `src/handover.rs`, `src/launch.rs` (the log rewrite) and `src/slots.rs` (the run records) may use `write_all` on the files they own, checked by `the_exemptions_are_exact_paths`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
+- Nothing but `output` writes, and stdout carries results only: the print lints in `Cargo.toml`, `only_the_output_module_writes` in `tests/architecture.rs` (a tripwire for the common spellings of a write, which the lints do not see: `write!`, `write_all`, `write_fmt`, `flush`, and naming `stdout()` or `stderr()`, or importing them `as` another name, anywhere but `src/main.rs`; the top-level `src/output.rs` and `src/main.rs` are exempt, and `src/handover.rs`, `src/launch.rs` (the log and result rewrite), `src/slots.rs` (the run records) and `src/task.rs` (the records' `.gitignore`) may use `write_all` on the files they own, checked by `the_exemptions_are_exact_paths`; a write hidden in a macro is not seen), and `at2_missing_model_names_profile_and_field`.
 - A row of `profiles` can always be split: `model` and `effort` hold no control, line-separator or bidirectional-control characters (U+2028, U+2029, U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), and `-` means no effort: `at2_unprintable_or_reserved_values_are_rejected`, `profiles_rows_have_fixed_columns`.
 - No networking or async-runtime crate is a dependency (R19): `deny.toml` bans them (the one list), and `at24_no_networking_crates_in_lockfile` reads that list.
 - A task's status moves `created`, `running`, then exactly one end state, and an end never changes; the one exception is a task cancelled while it waits for a slot, which goes `created` to `cancelled` and never runs: `created_becomes_running_and_nothing_else_does`, `a_created_task_can_be_cancelled_before_it_starts`, `only_a_running_task_can_end`, `an_end_state_cannot_be_an_end_of_itself` in `src/status.rs`.
@@ -46,7 +46,14 @@ Invariants, each with the test that checks it:
 After the run, dog-walker validates `result.md` and copies it into `handover.md` under the
 Result heading. A missing, empty, unreadable or non-UTF-8 `result.md` gives status `failed`
 with a reason, the log kept and no invented result (R13). `result.md` is the harness's own
-file, so redaction (R18) covers the handover and the log, not it.
+file, but once the run is over it is rewritten with the configured secret values replaced, like
+`harness.log`, so the whole task folder is safe to copy (R18, D15; `at23_*`). A `result.md` that is
+not a regular file is left for the result check to refuse.
+
+The first task writes `.dog-walker/.gitignore` (`/tasks/`, `/ids/`, `/run/` and itself), so the
+records stay out of git without touching the project's own `.gitignore`; `config.toml`, the
+project's policy, is not listed because it is meant to be committed. An existing one is left as
+it is (`at13_the_records_ignore_themselves_in_git`).
 
 An id is allocated by creating a marker file for it under `.dog-walker/ids/` with `create_new`,
 retrying with the next id when the name is taken: the marker is atomic, so two tasks started at
@@ -67,8 +74,9 @@ regular file, so a link or a pipe there is refused, not read (`at16_a_symlinked_
 ## The harness environment
 
 The harness is the profile's `command` or its harness's adapter argv (see "Adapters"), an argv
-list with the brief appended as its last argument, started in the project directory, with
-stdin closed and its output in `harness.log`.
+list with the prompt appended as its last argument (the brief, then a fixed line naming
+`$DOG_WALKER_RESULT_PATH`, D14; the handover records the brief alone), started in the project
+directory, with stdin closed and its output in `harness.log`.
 It reads, from the environment:
 
 - `DOG_WALKER_TASK_DIR`, `DOG_WALKER_HANDOVER_PATH`, `DOG_WALKER_RESULT_PATH`, `DOG_WALKER_TASK_ID`;
@@ -168,15 +176,15 @@ harness program that does not resolve is refused before a task exists. Adding an
 `adapter` and the contract test, nothing else; a new harness also needs its `Harness` variant,
 and a harness that boots a profile of its own (dsh) adds a validated key beside `command`.
 
-The launcher appends the brief with `adapter::with_brief`, so "the brief is the last argument"
-is one rule, and it resolves the program once: the check and the run use the same absolute
+The launcher appends the prompt (`launch::prompt`: the brief and the result footer) with
+`adapter::with_brief`, so "the prompt is the last argument" is one rule, and it resolves the program once: the check and the run use the same absolute
 path. The environment is the profile's names plus the adapter's, deduplicated, and a profile
 with its own `command` does not get the adapter's names — it is not running the adapter.
 
 `tests/adapter_contract.rs` is the shared contract, run against a stub of the harness on
 `PATH` (through the real CLI) and against a fake adapter written in the test: the program
 resolves, the model and the effort reach the argv (or, for dsh, the dsh profile it names), the
-brief is exactly the last argument, stdin is closed so the harness cannot prompt, and the
+prompt (the brief, then the result footer) is exactly the last argument, stdin is closed so the harness cannot prompt, and the
 result reaches the handover.
 
 The adapters are Claude Code (`claude -p --dangerously-skip-permissions --model … [--effort …] --`),
@@ -199,17 +207,15 @@ the directory through it. `--no-session` stops Pi making a session there, and wi
 directory it still tries to lock `settings.json` to read it, logs a warning and falls back to
 its defaults: a profile that needs those settings gives Pi a writable agent directory instead.
 
-A Claude Code profile with a subscription (no API key). The adapter always puts
-`ANTHROPIC_API_KEY` in the environment and `run` refuses when it is unset, so a profile that
-authenticates with a subscription token sets `command` instead (a profile with its own `command`
-does not get the adapter's names) and spells out the adapter's arguments. Steps, in
-`docs/setup.md`: run `claude setup-token` yourself and keep the token in a mode 600
-file outside the repo; list `CLAUDE_CODE_OAUTH_TOKEN` in `env` and `secrets`; give Claude Code a
-private, empty `CLAUDE_CONFIG_DIR` in `writable_dirs` (so it cannot read `~/.claude`), its install
-directory (`~/.local/share/claude`) in `read_only_dirs`, and a temp directory inside that
-writable directory through `CLAUDE_CODE_TMPDIR` and `TMPDIR`, since the sandbox mounts no
-`/tmp` and Claude Code fails with `EROFS … mkdir '/tmp'` without one. All of these variables are
-forwarded by name, so they must be set in the shell that runs `dog-walker`.
+A Claude Code profile names its own credential, like Pi's provider key: the adapter requires no
+variable (D14), so `ANTHROPIC_API_KEY` or, for a subscription, `CLAUDE_CODE_OAUTH_TOKEN` goes in
+the profile's `env` and `secrets`. Steps, in `docs/setup.md`: run `claude setup-token` yourself and
+keep the token in a mode 600 file outside the repo; give Claude Code a private, empty
+`CLAUDE_CONFIG_DIR` in `writable_dirs` (so it cannot read `~/.claude`), its install directory
+(`~/.local/share/claude`) in `read_only_dirs`, and a temp directory inside that writable directory
+through `CLAUDE_CODE_TMPDIR` and `TMPDIR`, since the sandbox mounts no `/tmp` and Claude Code
+fails with `EROFS … mkdir '/tmp'` without one. All of these variables are forwarded by name, so
+they must be set in the shell that runs `dog-walker`.
 
 Checks: `at5_a_fake_adapter_meets_the_contract_without_a_core_change`,
 `at5_nothing_speaks_acp`, `at28_the_claude_code_adapter_meets_the_contract`, `at28_the_pi_adapter_meets_the_contract`,
