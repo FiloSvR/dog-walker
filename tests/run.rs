@@ -804,7 +804,7 @@ fn a_profile_without_a_command_or_adapter_is_a_usage_error() {
     assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
     let err = stderr(&out);
     assert!(
-        err.contains("`codex`") && err.contains("not written yet"),
+        err.contains("`dsh`") && err.contains("not written yet") && err.contains("command"),
         "{err}"
     );
     assert!(!fixture.tasks().exists());
