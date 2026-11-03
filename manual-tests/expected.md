@@ -37,3 +37,18 @@ change to tracked files.
 - `harness.log` holds the worker's answer ("hello"); there is no `result.md`.
 - This is the known cost of the contract: the brief must name `$DOG_WALKER_RESULT_PATH`
   (`dog-walker instructions`, "Where to answer").
+
+## 04-review-worker-diff
+
+Run after a worker task has left an uncommitted change (the placeholder is the worker's
+`handover.md`).
+
+- Exit code 0 and `status = "done"`; the reviewer runs `git diff` (read-only `.git` allows it).
+- The result starts with `APPROVE` or `CHANGES REQUESTED`, then findings with file and line, most
+  severe first. It reads the worker's handover and compares its Result with the diff.
+- The reviewer changes nothing: `git status` is the same before and after, and `.git` has no new
+  commit. Only `.dog-walker/` gains a task folder.
+- Quality, not wording: a planted flaw (a test that cannot fail, an extra file touched, a Result
+  that misdescribes the diff) should be found. In the first run the reviewer caught a tautological
+  test (`is_end` is defined as `ENDS.contains`), though it still wrote `APPROVE` above a finding
+  that said the test pins nothing: read the findings, not only the verdict line.

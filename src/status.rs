@@ -152,4 +152,11 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn every_end_state_is_listed_in_all() {
+        for end in Status::ENDS {
+            assert!(Status::ALL.contains(&end), "{end}");
+        }
+    }
 }
