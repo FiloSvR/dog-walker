@@ -177,7 +177,7 @@ starts while it can see another record logs `warning: task <id> overlaps task <o
 scope (the project)`, naming both ids; two runners that read before either writes miss it.
 
 Checks: `at10_three_tasks_run_at_once`, `at11_a_limit_queues_the_second_task`,
-`at11_a_queued_task_can_be_cancelled`, `at11_a_planted_record_is_not_a_slot`,
+`at11_a_queued_task_can_be_cancelled`, `at11_the_run_records_are_read_only_in_the_sandbox`, `at11_a_planted_record_is_not_a_slot`,
 `at11_a_symlinked_run_directory_is_refused`, `at12_an_overlap_is_warned_about_by_id`, and the
 unit tests in `src/slots.rs`.
 

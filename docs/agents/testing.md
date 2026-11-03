@@ -22,7 +22,7 @@ as its last argument, so `tests/run.rs` exercises the
 same launcher a user configures. It is not part of the binary, and there are no test-only
 variants in it.
 
-The sandbox tests (`at8`, `at19`-`at21`, `at23`, `at25`, `at26`) use the real `bwrap`, since they check
+The sandbox tests (`at8`, `at19`-`at21`, `at23`, `at11_the_run_records_are_read_only_in_the_sandbox`, `at25`, `at26`) use the real `bwrap`, since they check
 OS-level effects (`at22_without_bwrap_*` deliberately runs without it); they are skipped with a loud message when `bwrap` or user namespaces are missing,
 unless `DOG_WALKER_REQUIRE_SANDBOX` is set to any non-empty value, `0` included (CI sets `1`),
 in which case a missing sandbox fails them. The other `tests/run.rs` tests run with
