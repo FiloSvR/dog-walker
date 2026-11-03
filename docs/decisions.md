@@ -143,3 +143,12 @@ real trade-off. Discussion is on the issue named at the end of each entry.
     `result.md` raw because it is the harness's file (the harness has already ended, and a
     secret in a committed file is worse than an edited copy). A secret the harness transforms is
     still not caught, as before.
+
+16. **An adapter can carry fixed environment values**
+    (D16, 2026-11-03). dsh has no argv flag for "an outer sandbox is the boundary", only
+    `DSH_PERMISSION_MODE=danger-full-access`; without it a headless run has no working shell
+    (its own landlock sandbox cannot start inside bwrap, and its approval prompt has no answerer).
+    `Adapter::fixed_env` names variables with a value dog-walker sets, as the Claude Code and
+    Codex adapters pass their flags. A profile with its own `command` is not running the adapter,
+    and one that lists the name in `env` keeps its own (the host's) value. Rejected: leaving it to
+    each user's profile (a silent, hard-to-diagnose failure: the task still ends `done`).

@@ -81,6 +81,7 @@ fn stub(dir: &Path, program: &str) -> PathBuf {
          if [ \"$status\" -eq 0 ]; then echo open > {dir}/stdin.txt; \
          elif [ \"$status\" -gt 128 ]; then echo timeout > {dir}/stdin.txt; \
          else echo closed > {dir}/stdin.txt; fi\n\
+         printf '%s' \"${{DSH_PERMISSION_MODE:-unset}}\" > {dir}/mode.txt\n\
          printf 'the fake %s wrote this\\n' \"$(basename \"$0\")\" > \"$DOG_WALKER_RESULT_PATH\"\n",
         dir = dir.display()
     );
@@ -431,6 +432,7 @@ fn at28_the_dsh_adapter_meets_the_contract() {
         .arg(&config)
         .args(["run", "alpha", "the brief", "--unsandboxed"])
         .current_dir(&project)
+        .env_remove("DSH_PERMISSION_MODE")
         .env(
             "PATH",
             format!(
@@ -452,6 +454,11 @@ fn at28_the_dsh_adapter_meets_the_contract() {
         Some(0),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+    // dsh runs in its mode for an outer sandbox without the user setting it.
+    assert_eq!(
+        fs::read_to_string(project.join("mode.txt")).unwrap(),
+        "danger-full-access"
     );
     let printed = fs::read_to_string(project.join("argv.txt")).unwrap();
     let recorded: Vec<&str> = printed.lines().collect();
