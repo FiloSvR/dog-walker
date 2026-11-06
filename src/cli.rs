@@ -397,10 +397,12 @@ fn sandbox_off_by_config(cli: &Cli, config: &Config) -> Result<bool, ConfigError
         return Ok(false);
     }
     let global = global_config_path()?;
-    if config_path(cli)? == global || !global.is_file() {
+    if config_path(cli)? == global {
         return Ok(false);
     }
-    Ok(Config::load(&global)?.sandbox() == Some(false))
+    // Only the one key: a global config that is broken, or has no profiles, is no reason to
+    // stop a project that has its own.
+    Ok(config::sandbox_setting(&global) == Some(false))
 }
 
 fn global_config_path() -> Result<PathBuf, ConfigError> {
