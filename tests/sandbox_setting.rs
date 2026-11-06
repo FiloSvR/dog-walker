@@ -140,3 +140,21 @@ fn at34_the_project_setting_wins_over_the_global_one() {
     let out = off.run();
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
+
+// AT34: only the `sandbox` key of the global config is read for a project that has its own, so
+// a global file with no profiles still gives the setting, and a broken one is ignored.
+#[test]
+fn at34_the_global_fallback_reads_only_the_sandbox_key() {
+    let only = Setup::new("only-key");
+    fs::write(&only.global, "sandbox = false\n").unwrap();
+    only.project("");
+    let out = only.run();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+
+    let broken = Setup::new("broken-global");
+    fs::write(&broken.global, "this is [not toml\n").unwrap();
+    broken.project("");
+    let out = broken.run();
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(stderr(&out).contains("--unsandboxed"), "{}", stderr(&out));
+}

@@ -141,6 +141,15 @@ struct RawProfile {
     secrets: Option<Vec<String>>,
 }
 
+/// The `sandbox` setting of the config at `path`, read alone: the rest of the file is not
+/// validated, and a file that is missing, unreadable or not TOML says nothing (`None`), so the
+/// global config's profiles cannot stop a project that has its own.
+pub fn sandbox_setting(path: &Path) -> Option<bool> {
+    let text = fs::read_to_string(path).ok()?;
+    let table: toml::Table = toml::from_str(&text).ok()?;
+    table.get("sandbox").and_then(toml::Value::as_bool)
+}
+
 impl Config {
     /// Reads and validates the config file at `path`.
     pub fn load(path: &Path) -> Result<Config, ConfigError> {
