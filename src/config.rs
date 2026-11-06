@@ -141,10 +141,19 @@ struct RawProfile {
     secrets: Option<Vec<String>>,
 }
 
+/// The largest config file `sandbox_setting` reads.
+const MAX_SETTING_FILE: u64 = 1 << 20;
+
 /// The `sandbox` setting of the config at `path`, read alone: the rest of the file is not
 /// validated, and a file that is missing, unreadable or not TOML says nothing (`None`), so the
 /// global config's profiles cannot stop a project that has its own.
 pub fn sandbox_setting(path: &Path) -> Option<bool> {
+    // A config is a small regular file: a FIFO, a device or a huge file is not read, so that
+    // it cannot block a project that has its own config.
+    let meta = fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_SETTING_FILE {
+        return None;
+    }
     let text = fs::read_to_string(path).ok()?;
     let table: toml::Table = toml::from_str(&text).ok()?;
     table.get("sandbox").and_then(toml::Value::as_bool)
