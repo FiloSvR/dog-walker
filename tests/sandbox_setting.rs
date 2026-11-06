@@ -158,3 +158,37 @@ fn at34_the_global_fallback_reads_only_the_sandbox_key() {
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     assert!(stderr(&out).contains("--unsandboxed"), "{}", stderr(&out));
 }
+
+// AT34: a global path that is not a regular file (a FIFO here) counts as silent and is never
+// read, so it cannot make a project that has its own config wait.
+#[test]
+fn at34_a_global_path_that_is_not_a_file_is_not_read() {
+    let setup = Setup::new("fifo");
+    let made = Command::new("mkfifo").arg(&setup.global).status().unwrap();
+    assert!(made.success());
+    setup.project("");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dog-walker"))
+        .args(["run", "alpha", "the brief"])
+        .current_dir(&setup.project)
+        .env("XDG_CONFIG_HOME", setup.dir.join("xdg"))
+        .env_remove("HOME")
+        .env("PATH", setup.dir.join("bin"))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if start.elapsed() > std::time::Duration::from_secs(20) {
+            child.kill().unwrap();
+            panic!("dog-walker waits on the global FIFO");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    // The sandbox stays on, so without bwrap on PATH the run is refused.
+    assert_eq!(status.code(), Some(2));
+}
