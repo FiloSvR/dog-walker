@@ -208,3 +208,19 @@ fn at34_a_global_file_over_the_limit_is_not_read() {
     let out = setup.run();
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
 }
+
+// AT34: the limit is exactly 1 MiB: a file of that size is read, one byte more is not.
+#[test]
+fn at34_the_limit_is_exactly_one_mebibyte() {
+    for (name, size, code) in [("at-limit", 1 << 20, 0), ("over-limit", (1 << 20) + 1, 2)] {
+        let setup = Setup::new(name);
+        let mut text = String::from("sandbox = false\n");
+        text.push_str(&"#".repeat(size - text.len() - 1));
+        text.push('\n');
+        assert_eq!(text.len(), size);
+        fs::write(&setup.global, text).unwrap();
+        setup.project("");
+        let out = setup.run();
+        assert_eq!(out.status.code(), Some(code), "{name}: {}", stderr(&out));
+    }
+}
