@@ -175,7 +175,7 @@ fn at34_a_global_path_that_is_not_a_file_is_not_read() {
         .env("PATH", setup.dir.join("bin"))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     let start = std::time::Instant::now();
@@ -189,6 +189,22 @@ fn at34_a_global_path_that_is_not_a_file_is_not_read() {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
-    // The sandbox stays on, so without bwrap on PATH the run is refused.
-    assert_eq!(status.code(), Some(2));
+    // The sandbox stays on, so without bwrap on PATH the run is refused, and says so.
+    let mut why = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut why).unwrap();
+    assert_eq!(status.code(), Some(2), "{why}");
+    assert!(why.contains("--unsandboxed"), "{why}");
+}
+
+// AT34: a global file over the size limit counts as silent, even when its `sandbox = false`
+// comes first.
+#[test]
+fn at34_a_global_file_over_the_limit_is_not_read() {
+    let setup = Setup::new("huge");
+    let mut text = String::from("sandbox = false\n");
+    text.push_str(&"# padding\n".repeat(120_000));
+    fs::write(&setup.global, text).unwrap();
+    setup.project("");
+    let out = setup.run();
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
 }
