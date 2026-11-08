@@ -151,11 +151,16 @@ pub fn sandbox_setting(path: &Path) -> Option<bool> {
     // A config is a small regular file: a FIFO, a device or a huge file is not read, so that
     // it cannot block a project that has its own config. The file is opened without waiting
     // (a FIFO would otherwise block the open), checked through the open handle, and read
-    // through a limit, so a path swapped after the check cannot change that.
+    // through a limit, so a path swapped after the check cannot change that. A path that is
+    // not a regular file is not opened at all, so a device is never touched.
     use std::os::unix::fs::OpenOptionsExt;
+    if !fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let flags = rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::NOCTTY;
     let file = fs::OpenOptions::new()
         .read(true)
-        .custom_flags(rustix::fs::OFlags::NONBLOCK.bits().cast_signed())
+        .custom_flags(flags.bits().cast_signed())
         .open(path)
         .ok()?;
     if !file.metadata().ok()?.is_file() {
