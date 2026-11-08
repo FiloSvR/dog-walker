@@ -149,12 +149,25 @@ const MAX_SETTING_FILE: u64 = 1 << 20;
 /// global config's profiles cannot stop a project that has its own.
 pub fn sandbox_setting(path: &Path) -> Option<bool> {
     // A config is a small regular file: a FIFO, a device or a huge file is not read, so that
-    // it cannot block a project that has its own config.
-    let meta = fs::metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > MAX_SETTING_FILE {
+    // it cannot block a project that has its own config. The file is opened without waiting
+    // (a FIFO would otherwise block the open), checked through the open handle, and read
+    // through a limit, so a path swapped after the check cannot change that.
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NONBLOCK.bits().cast_signed())
+        .open(path)
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
         return None;
     }
-    let text = fs::read_to_string(path).ok()?;
+    let mut text = String::new();
+    file.take(MAX_SETTING_FILE + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    if text.len() as u64 > MAX_SETTING_FILE {
+        return None;
+    }
     let table: toml::Table = toml::from_str(&text).ok()?;
     table.get("sandbox").and_then(toml::Value::as_bool)
 }
